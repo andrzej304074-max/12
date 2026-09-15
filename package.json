@@ -1,0 +1,19 @@
+{
+  "name": "vinted-seller-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Remote MCP server for Vinted sellers: comps research, price estimation, listing preparation and seller monitoring. Runs on Vercel.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.0",
+    "vitest": "^2.1.0"
+  }
+}
