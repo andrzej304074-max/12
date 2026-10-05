@@ -15,6 +15,9 @@
     },
     "api/app/**/*.ts": {
       "maxDuration": 60
+    },
+    "api/pro/**/*.ts": {
+      "maxDuration": 30
     }
   }
 }

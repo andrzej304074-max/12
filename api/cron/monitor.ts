@@ -1,4 +1,5 @@
 import { authenticateCron } from "../../src/auth.js";
+import { unofficialEnabled } from "../../src/features.js";
 import {
   header,
   sendJson,
@@ -7,15 +8,21 @@ import {
 } from "../../src/http.js";
 import { log } from "../../src/log.js";
 import { runPass } from "../../src/monitor/engine.js";
+import { reconcileAllPro } from "../../src/pro/reconcile.js";
 import { getStore } from "../../src/store/index.js";
 
 /**
- * Scheduled watchlist poll, wired up in vercel.json.
+ * The daily job, wired up in vercel.json.
  *
- * Detects new listings, notifies the webhook if one is set, and - only for
- * watches with auto_like / auto_offer and only when AUTO_ACTIONS_ENABLED is
- * true - works through the automatic-action queue under the account's limits,
- * activity window and circuit breaker. See src/monitor/engine.ts.
+ * Vinted Pro: catches up on anything asynchronous that a webhook did not report
+ * (items still "in progress", a stale ontology cache). See src/pro/reconcile.ts.
+ *
+ * Only when ENABLE_UNOFFICIAL=true, the watchlist poll of the unofficial
+ * consumer API: it detects new listings, notifies the webhook if one is set,
+ * and - only for watches with auto_like / auto_offer and only when
+ * AUTO_ACTIONS_ENABLED is true - works through the automatic-action queue under
+ * the account's limits, activity window and circuit breaker. See
+ * src/monitor/engine.ts.
  */
 export default async function handler(
   req: VercelLikeRequest,
@@ -38,7 +45,8 @@ export default async function handler(
   }
 
   try {
-    const results = await runPass();
+    const results = unofficialEnabled() ? await runPass() : [];
+    const pro = await reconcileAllPro();
     const totalFinds = results.reduce((sum, r) => sum + r.newFinds.length, 0);
     const totalAutoActions = results.reduce(
       (sum, r) => sum + r.autoActions.filter((a) => a.ok).length,
@@ -51,6 +59,8 @@ export default async function handler(
     });
     sendJson(res, 200, {
       ranAt: new Date().toISOString(),
+      unofficial: unofficialEnabled(),
+      pro,
       accounts: results.length,
       totalFinds,
       totalAutoActions,

@@ -54,6 +54,11 @@ export interface LoadedOntology {
   fromCache: boolean;
 }
 
+/** When the cached ontology was fetched, or null if there is none. Cheap: nothing is unzipped. */
+export async function ontologyFetchedAt(accountId: string): Promise<string | null> {
+  return (await getStore().get<Cached>(keys.proOntology(accountId)))?.fetchedAt ?? null;
+}
+
 /** Reads the cached ontology, or fetches (and caches) it. */
 export async function loadOntology(account: ProAccount, opts: { refresh?: boolean } = {}): Promise<LoadedOntology> {
   const store = getStore();

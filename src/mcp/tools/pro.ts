@@ -1,6 +1,7 @@
 import { cleanSnippet } from "../../vinted/evidence.js";
 import {
   deleteProAccount,
+  describeProAccount,
   getProAccount,
   listProAccounts,
   type ProAccount,
@@ -8,6 +9,7 @@ import {
 import { getProActions } from "../../pro/actionlog.js";
 import { getProClient } from "../../pro/client.js";
 import { ProError, ProInputError } from "../../pro/errors.js";
+import { DOCUMENTED_EVENTS, listProEvents } from "../../pro/events.js";
 import { assertProPath, proBaseUrl } from "../../pro/hosts.js";
 import {
   createItems,
@@ -43,7 +45,17 @@ import {
   MAX_BATCH,
   type ItemProblem,
 } from "../../pro/schema.js";
+import { listRefusedDeliveries } from "../../pro/receiver.js";
 import { getItemStates } from "../../pro/state.js";
+import {
+  checkWebhookUrl,
+  defaultWebhookUrl,
+  deleteWebhook,
+  listWebhooks,
+  registerWebhook,
+  simulateSale,
+  WEBHOOK_PATH,
+} from "../../pro/webhooks.js";
 import { jsonResult, type ToolResult } from "../protocol.js";
 import {
   ArgumentError,
@@ -850,6 +862,148 @@ const listActionsTool: Tool = {
   },
 };
 
+// ---------------------------------------------------------------- webhooks and events
+
+const EVENT_TYPE = /^[A-Z][A-Z0-9_]{2,63}$/;
+
+const listWebhooksTool: Tool = {
+  name: "pro_list_webhooks",
+  title: "List webhooks",
+  description:
+    "The webhook registered here for the account (address and event types; the signing key is never shown) and the list Vinted reports.",
+  annotations: READ,
+  inputSchema: { type: "object", properties: { account_id: accountProp }, additionalProperties: false },
+  async handler(args) {
+    const account = await getProAccount(optString(args, "account_id"));
+    return jsonResult({
+      account: account.id,
+      registeredHere: (await describeProAccount(account.id))?.webhook ?? null,
+      atVinted: capped(await listWebhooks(account)),
+    });
+  },
+};
+
+const registerWebhookTool: Tool = {
+  name: "pro_register_webhook",
+  title: "Register the webhook",
+  description: `Tells Vinted where to send events (sales, orders, labels, the outcome of creating, editing and deleting listings). The address must be this deployment's ${WEBHOOK_PATH}; it defaults to the Vercel production address. Vinted answers with a signing key, which is stored encrypted and used to verify every delivery. Replaces an earlier registration. Needs confirm: true.`,
+  annotations: WRITE,
+  inputSchema: {
+    type: "object",
+    properties: {
+      account_id: accountProp,
+      url: { type: "string", description: `Public address of this deployment's webhook, e.g. https://my-app.vercel.app${WEBHOOK_PATH}` },
+      events: { type: "array", items: { type: "string" }, description: "Event types; default: all the documentation lists." },
+      confirm: confirmProp,
+    },
+    additionalProperties: false,
+  },
+  async handler(args) {
+    const account = await getProAccount(optString(args, "account_id"));
+    const given = optString(args, "url") ?? defaultWebhookUrl(account.id);
+    if (!given) {
+      throw new ArgumentError(`"url" is required: this deployment's public address followed by ${WEBHOOK_PATH}, e.g. https://my-app.vercel.app${WEBHOOK_PATH}.`);
+    }
+    const url = checkWebhookUrl(given, account.id);
+    let events: string[] = [...DOCUMENTED_EVENTS];
+    if (args.events !== undefined) {
+      if (!Array.isArray(args.events) || args.events.length === 0 || !args.events.every((e) => typeof e === "string" && EVENT_TYPE.test(e))) {
+        throw new ArgumentError(`"events" must be a non-empty list of event types such as ITEM_SOLD.`);
+      }
+      events = args.events as string[];
+    }
+    const existing = (await describeProAccount(account.id))?.webhook;
+    if (optBoolean(args, "confirm") !== true) {
+      return preview(account, "register_webhook", { url, events }, existing?.registered ? { replaces: existing.url } : {});
+    }
+    const registered = await registerWebhook(account, url, events);
+    return jsonResult({
+      registered: true,
+      account: account.id,
+      ...registered,
+      note: "Vinted's signing key was stored encrypted and is not shown. Every delivery is verified with it. Set NODEJS_HELPERS=0 on Vercel so the signature can be checked over the exact bytes.",
+    });
+  },
+};
+
+const deleteWebhookTool: Tool = {
+  name: "pro_delete_webhook",
+  title: "Remove the webhook",
+  description: "Removes the account's webhook at Vinted and forgets its signing key here. Needs confirm: true.",
+  annotations: WRITE,
+  inputSchema: {
+    type: "object",
+    properties: {
+      account_id: accountProp,
+      webhook_id: { type: "string", description: "Defaults to the webhook registered here." },
+      confirm: confirmProp,
+    },
+    additionalProperties: false,
+  },
+  async handler(args) {
+    const account = await getProAccount(optString(args, "account_id"));
+    const webhookId = optString(args, "webhook_id");
+    if (optBoolean(args, "confirm") !== true) {
+      const here = (await describeProAccount(account.id))?.webhook;
+      return preview(account, "delete_webhook", { webhookId: webhookId ?? "(the one registered here)", url: here?.url ?? null });
+    }
+    return jsonResult({ account: account.id, ...(await deleteWebhook(account, webhookId)) });
+  },
+};
+
+const listEventsTool: Tool = {
+  name: "pro_list_events",
+  title: "Webhook events received",
+  description:
+    "The last events Vinted delivered by webhook for the account (newest first), and the last deliveries that were refused because their signature did not verify, with the reason. A refusal with fromParsed: true usually means NODEJS_HELPERS=0 is not set on Vercel.",
+  annotations: { readOnlyHint: true, openWorldHint: false },
+  inputSchema: {
+    type: "object",
+    properties: {
+      account_id: accountProp,
+      type: { type: "string", description: "Only this event type, e.g. ITEM_SOLD." },
+      limit: { type: "number", description: "How many (default 50, at most 100)." },
+    },
+    additionalProperties: false,
+  },
+  async handler(args) {
+    const account = await getProAccount(optString(args, "account_id"));
+    const type = optString(args, "type");
+    const limit = optNumber(args, "limit");
+    return jsonResult({
+      account: account.id,
+      events: await listProEvents(account.id, { ...(type ? { type } : {}), ...(limit !== undefined ? { limit } : {}) }),
+      refusedDeliveries: await listRefusedDeliveries(),
+      rawBodyForWebhooks: process.env.NODEJS_HELPERS === "0",
+    });
+  },
+};
+
+const simulateSaleTool: Tool = {
+  name: "pro_simulate_sale",
+  title: "Simulate a sale (sandbox)",
+  description:
+    "Sandbox only: asks Vinted to simulate the sale of one of the account's items, which sends ITEM_SOLD, ORDER_CREATED and the label webhooks. The way to test the whole path order -> shipment -> label. Refused for production accounts. Needs confirm: true.",
+  annotations: WRITE,
+  inputSchema: {
+    type: "object",
+    properties: {
+      account_id: accountProp,
+      item_id: { type: "string", description: "Vinted id of a created item." },
+      confirm: confirmProp,
+    },
+    required: ["item_id"],
+    additionalProperties: false,
+  },
+  async handler(args) {
+    const account = await getProAccount(optString(args, "account_id"));
+    const itemId = requireString(args, "item_id");
+    if (account.env !== "sandbox") throw new ProInputError("Sales can only be simulated in the sandbox; this account is set to production.");
+    if (optBoolean(args, "confirm") !== true) return preview(account, "simulate_sale", { itemId });
+    return jsonResult({ simulated: true, account: account.id, itemId, answer: capped(await simulateSale(account, itemId), 5_000), next: "The webhooks arrive in a moment; see pro_list_events." });
+  },
+};
+
 export const proTools: Tool[] = [
   listAccountsTool,
   diagnoseProTool,
@@ -871,6 +1025,11 @@ export const proTools: Tool[] = [
   getLabelTool,
   cancelOrderTool,
   relistOrdersTool,
+  listWebhooksTool,
+  registerWebhookTool,
+  deleteWebhookTool,
+  listEventsTool,
+  simulateSaleTool,
   rawGetTool,
   listActionsTool,
 ];

@@ -103,6 +103,8 @@ function setupFlags() {
     mcpAuthToken: cfg.mcpAuthToken !== null,
     cronSecret: cfg.cronSecret !== null,
     notifyWebhook: cfg.notifyWebhookUrl !== null,
+    // Vinted Pro webhooks are signed over the exact bytes; see src/pro/receiver.ts.
+    rawBodyForWebhooks: process.env.NODEJS_HELPERS === "0",
   };
 }
 

@@ -112,6 +112,7 @@ export function createFakePro(opts: FakeProOptions) {
   const requests: RecordedRequest[] = [];
   const outbox: OutboxEvent[] = [];
   let nextOrderId = 987654321;
+  let nextWebhookId = 1;
 
   /** The documented algorithm, written out independently of src/pro/signing.ts. */
   function checkSignature(method: string, pathWithQuery: string, body: string, headers: Record<string, string>): boolean {
@@ -256,7 +257,7 @@ export function createFakePro(opts: FakeProOptions) {
     if (route === "/api/v1/webhooks" && method === "POST") {
       const b = parsed();
       const webhook: FakeWebhook = {
-        id: `wh_${webhooks.size + 1}`,
+        id: `wh_${nextWebhookId++}`,
         url: String(b.url ?? ""),
         event_types: Array.isArray(b.event_types) ? (b.event_types as string[]) : [],
         signing_key: `whsec_${randomUUID().replace(/-/g, "")}`,

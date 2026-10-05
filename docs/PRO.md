@@ -79,8 +79,62 @@ zwraca, a blad w tresci zadania nie cytuje jego fragmentow.
 `pro_validate_items`, `pro_create_items`, `pro_update_items`,
 `pro_delete_items`, `pro_list_imported_items`, `pro_set_item_references`,
 `pro_list_orders`, `pro_get_order`, `pro_get_shipment`, `pro_get_label`,
-`pro_cancel_order`, `pro_relist_orders`, `pro_list_actions`, `pro_raw_get`,
+`pro_cancel_order`, `pro_relist_orders`, `pro_list_webhooks`,
+`pro_register_webhook`, `pro_delete_webhook`, `pro_list_events`,
+`pro_simulate_sale` (tylko sandbox), `pro_list_actions`, `pro_raw_get`,
 `pro_remove_account`.
+
+## Webhooki
+
+Tworzenie, edycja i usuwanie ofert sa asynchroniczne, wiec wynik (i sprzedaz,
+zamowienia, gotowa etykieta) przychodzi do Ciebie webhookiem.
+
+1. Zarejestruj webhook: narzedzie `pro_register_webhook` (bez `confirm` pokazuje
+   podglad). Adres to `https://<twoja-domena>/api/pro/webhook`; serwer sam
+   dopisuje `?account=<id konta>`. Na Vercelu adres produkcyjny jest domyslny.
+2. Vinted odpowiada **kluczem podpisu** tego webhooka. Jest zapisywany
+   zaszyfrowany i uzywany wylacznie do sprawdzania dostaw; zadna odpowiedz go nie
+   pokazuje.
+3. Kazda dostawa jest przyjmowana tylko, gdy jej podpis (HMAC-SHA256 po
+   `<t>.<surowe cialo>`) sie zgadza, a `t` jest nie starsze niz 5 minut.
+   Powtorzona dostawa jest obslugiwana raz (10 minut). Odpowiedz 2xx wraca od
+   razu.
+4. Zdarzenia widac w `pro_list_events` (ostatnie 100) i w indeksie ofert
+   (`pro_list_items` -> `tracked`). O sprzedazy, zamowieniach, etykiecie,
+   anulowaniu i bledach powiadamia `NOTIFY_WEBHOOK_URL`, jesli jest ustawiony.
+
+### Wazne: `NODEJS_HELPERS=0`
+
+Podpis obejmuje **dokladne bajty** ciala. Domyslnie Vercel parsuje JSON przed
+uruchomieniem funkcji i te bajty znikaja. Ustaw w projekcie na Vercelu
+(Settings -> Environment Variables, wszystkie srodowiska) zmienna
+`NODEJS_HELPERS=0` i zrob Redeploy: funkcje dostana wtedy surowy strumien. Ten
+projekt nie uzywa zadnych pomocnikow Vercela (`req.body`, `req.query`, `res.json`),
+wiec nic innego sie nie zmienia. Sprawdzone prawdziwym `vercel build`: ze zmienna
+zbudowane funkcje maja `shouldAddHelpers: false`.
+
+Bez niej odbiornik odbudowuje cialo z sparsowanego JSON-u. To weryfikuje sie
+tylko wtedy, gdy JSON od Vinted jest bajt w bajt taki jak `JSON.stringify`;
+inaczej dostawa jest **odrzucana** (bezpiecznie), a `pro_list_events` pokazuje ja
+w `refusedDeliveries` z `fromParsed: true` i powodem.
+
+### Test w sandboxie
+
+Dodaj oferte (`pro_create_items`), poczekaj az przejdzie z `IN_PROGRESS`, potem
+`pro_simulate_sale` z jej id: Vinted wysle `ITEM_SOLD`, `ORDER_CREATED` i
+`SHIPMENT_LABEL_CREATED`. Po nich `pro_list_orders` pokaze zamowienie, a
+`pro_get_label` zwroci etykiete PDF.
+
+## Codzienne uzgodnienie (cron)
+
+Raz dziennie (Vercel Cron, plan Hobby pozwala na taka czestotliwosc) serwer:
+
+- pyta o status ofert, ktore od ponad 5 minut sa `IN_PROGRESS` (gdyby webhook
+  zginal), nie wiecej niz 40 na konto,
+- odswieza pamiec podreczna ontologii, gdy ma ponad 20 godzin.
+
+Konto z odrzuconym tokenem jest pomijane. Funkcje nieoficjalne (monitoring
+sprzedawcow) dzialaja w tym cronie tylko przy `ENABLE_UNOFFICIAL=true`.
 
 ## Co jest niepewne i jak to sprawdzic
 
