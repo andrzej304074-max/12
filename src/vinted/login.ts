@@ -3,7 +3,7 @@ import { getConfig, type VintedAccount } from "../config.js";
 import { decryptJson, encryptJson } from "../crypto.js";
 import { log } from "../log.js";
 import { notify } from "../monitor/notify.js";
-import { getStore, keys } from "../store/index.js";
+import { getStore, keys, thisHour } from "../store/index.js";
 import {
   listAccountSummaries,
   markNeedsLogin,
@@ -13,6 +13,14 @@ import {
   type AccountSummary,
 } from "./accounts.js";
 import { endpoints } from "./endpoints.js";
+import {
+  classify,
+  collectEvidence,
+  describeEvidence,
+  outcomeFor,
+  type Evidence,
+  type Verdict,
+} from "./evidence.js";
 import { assertVintedHost, HostError } from "./hosts.js";
 
 /**
@@ -28,6 +36,9 @@ import { assertVintedHost, HostError } from "./hosts.js";
  *     the login stops with a clear message. There is deliberately no attempt
  *     to solve, bypass or disguise anything - and no retry loop that would
  *     keep hammering a login endpoint.
+ *   - "Bot protection" is only claimed on evidence (see ./evidence.ts). Every
+ *     failure carries the HTTP status, server and a cleaned snippet of the
+ *     answer, so a wrong address can be told apart from a real block.
  *
  * The request and response field names below are UNVERIFIED (Vinted's login is
  * not a documented API and could not be exercised from the build environment).
@@ -54,6 +65,7 @@ export const LOGIN_FIELDS = {
 export type LoginFailure =
   | "bad_credentials"
   | "blocked"
+  | "rejected"
   | "rate_limited"
   | "bad_code"
   | "expired"
@@ -65,6 +77,8 @@ export class LoginError extends Error {
   constructor(
     readonly kind: LoginFailure,
     message: string,
+    /** What Vinted actually answered (never request data). */
+    readonly details?: Evidence,
   ) {
     super(message);
     this.name = "LoginError";
@@ -84,25 +98,44 @@ const MAX_LOGIN_ATTEMPTS_PER_HOUR = 3;
 const MAX_CODE_ATTEMPTS = 5;
 const CHALLENGE_TTL_SECONDS = 600;
 
-const BLOCK_PATTERN =
-  /captcha|datadome|cloudflare|just a moment|access denied|challenge-platform|are you a robot|bot detection|perimeterx/i;
-
 interface RawResponse {
   status: number;
   headers: Headers;
   text: string;
   json: Record<string, unknown> | null;
+  evidence: Evidence;
+  verdict: Verdict;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `secrets` are values that were sent in the request (password, login). They
+ * are scrubbed from anything shown back, in case a response echoes them.
+ * Redirects are not followed: a 3xx is evidence in itself.
+ */
 async function postToken(
   domain: string,
   body: Record<string, unknown>,
+  secrets: string[] = [],
 ): Promise<RawResponse> {
   const cfg = getConfig();
   let res: Response;
   try {
     res = await fetch(`https://${domain}${endpoints.oauthToken()}`, {
       method: "POST",
+      redirect: "manual",
       headers: {
         "user-agent": cfg.userAgent,
         accept: "application/json",
@@ -115,28 +148,46 @@ async function postToken(
     throw new LoginError("unexpected", `Network error talking to ${domain}: ${(err as Error).message}`);
   }
   const text = await res.text().catch(() => "");
-  let json: Record<string, unknown> | null = null;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      json = parsed as Record<string, unknown>;
-    }
-  } catch {
-    json = null;
-  }
-  return { status: res.status, headers: res.headers, text, json };
-}
-
-/** True when the answer is a bot-protection or rate-limit response, not an API one. */
-export function looksBlocked(res: RawResponse): boolean {
-  if (res.status === 429) return true;
-  if (res.json) return res.status === 403 && BLOCK_PATTERN.test(res.text);
-  // Not JSON: an HTML page where the API should have answered.
-  return res.status === 403 || res.status === 503 || BLOCK_PATTERN.test(res.text);
+  const json = parseJsonObject(text);
+  const evidence = collectEvidence(res.status, res.headers, text, secrets);
+  return { status: res.status, headers: res.headers, text, json, evidence, verdict: classify(evidence, json !== null) };
 }
 
 const BLOCKED_MESSAGE =
-  "Vinted required a bot-protection check (captcha or rate limit) that a server cannot pass. Nothing was bypassed and no further attempts were made - try again later.";
+  "Vinted's bot protection blocked this request before looking at any password, so the same answer comes back whatever is typed. A server cannot pass that check. Nothing was bypassed and no further attempts were made.";
+
+/**
+ * The error for an answer that is not login data, or null when it is JSON the
+ * caller should read. The wording says what was actually seen - a wrong
+ * address must not be reported as a block.
+ */
+function nonApiError(res: RawResponse): LoginError | null {
+  const { verdict, evidence } = res;
+  switch (verdict) {
+    case "wall":
+      return new LoginError("blocked", BLOCKED_MESSAGE, evidence);
+    case "rate_limited":
+      return new LoginError(
+        "rate_limited",
+        "Vinted is rate limiting this server (HTTP 429). Wait a while before trying again.",
+        evidence,
+      );
+    case "rejected":
+      return new LoginError(
+        "rejected",
+        `Vinted rejected the request with HTTP ${evidence.status} and did not say why. This is often bot protection, but the answer has no recognisable marker, so that could not be confirmed.`,
+        evidence,
+      );
+    case "not_api":
+      return new LoginError(
+        "unexpected",
+        `Vinted answered with a web page instead of login data (${describeEvidence(evidence)}). The login address has probably changed - this is not a problem with the password. See docs/ACCOUNTS.md.`,
+        evidence,
+      );
+    default:
+      return null;
+  }
+}
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
@@ -339,11 +390,12 @@ export async function startLogin(input: LoginInput): Promise<LoginResult> {
     grant_type: "password",
     username: email,
     password: input.password,
-  });
+  }, [input.password, email]);
 
-  if (looksBlocked(res)) {
-    await logAttempt(domain, email, "blocked");
-    throw new LoginError("blocked", BLOCKED_MESSAGE);
+  const failure = nonApiError(res);
+  if (failure) {
+    await logAttempt(domain, email, outcomeFor(failure.kind, res.evidence));
+    throw failure;
   }
 
   const tokens = readTokens(res);
@@ -372,12 +424,20 @@ export async function startLogin(input: LoginInput): Promise<LoginResult> {
     return { status: "challenge", loginId, method: challenge.method, hint: challenge.hint };
   }
 
-  await logAttempt(domain, email, `unexpected_${res.status}`);
+  const rejected = res.status === 403 || res.status === 503;
+  await logAttempt(domain, email, outcomeFor(rejected ? "rejected" : "unexpected", res.evidence));
   log.warn("unexpected login response", { status: res.status });
-  throw new LoginError(
-    "unexpected",
-    `Vinted answered the login with an unexpected response (HTTP ${res.status}). The login endpoint probably changed - see docs/ACCOUNTS.md.`,
-  );
+  throw rejected
+    ? new LoginError(
+        "rejected",
+        `Vinted rejected the request with HTTP ${res.status} and did not say why (${describeEvidence(res.evidence)}). This is often bot protection, but the answer has no recognisable marker, so that could not be confirmed.`,
+        res.evidence,
+      )
+    : new LoginError(
+        "unexpected",
+        `Vinted answered the login with an unexpected response (${describeEvidence(res.evidence)}). The login endpoint probably changed - see docs/ACCOUNTS.md.`,
+        res.evidence,
+      );
 }
 
 export async function verifyLogin(input: { loginId: string; code: string }): Promise<LoginResult> {
@@ -404,12 +464,14 @@ export async function verifyLogin(input: { loginId: string; code: string }): Pro
     username: state.email,
     ...state.echo,
     [LOGIN_FIELDS.codeKey]: code,
-  });
+  }, [code, state.email]);
 
-  if (looksBlocked(res)) {
-    await store.del(keys.loginState(input.loginId));
-    await logAttempt(state.domain, state.email, "blocked_on_code");
-    throw new LoginError("blocked", BLOCKED_MESSAGE);
+  const failure = nonApiError(res);
+  if (failure) {
+    // A rate limit leaves the challenge in place; anything else ends it.
+    if (failure.kind !== "rate_limited") await store.del(keys.loginState(input.loginId));
+    await logAttempt(state.domain, state.email, `${outcomeFor(failure.kind, res.evidence)} (code step)`);
+    throw failure;
   }
   const tokens = readTokens(res);
   if (tokens) {
@@ -435,8 +497,9 @@ export async function refreshSession(account: VintedAccount): Promise<VintedAcco
     scope: LOGIN_FIELDS.scope,
     grant_type: "refresh_token",
     refresh_token: account.refreshToken,
-  });
-  if (looksBlocked(res)) throw new LoginError("blocked", BLOCKED_MESSAGE);
+  }, [account.refreshToken]);
+  const failure = nonApiError(res);
+  if (failure) throw failure;
   const tokens = readTokens(res);
   if (!tokens) {
     throw new LoginError("expired", "Vinted refused to renew the session; a new login is needed.");
@@ -448,6 +511,150 @@ export async function refreshSession(account: VintedAccount): Promise<VintedAcco
   });
   if (!updated) throw new LoginError("expired", "The account no longer exists.");
   return updated;
+}
+
+// ---------------------------------------------------------------- connection probe
+
+export type ProbeVerdict =
+  | "wall"
+  | "reachable"
+  | "endpoint_missing"
+  | "rate_limited"
+  | "network"
+  | "inconclusive";
+
+export interface ProbeCheck {
+  label: string;
+  method: "GET" | "POST";
+  path: string;
+  /** Verdict of this one request, or "network_error" when nothing came back. */
+  verdict: Verdict | "network_error";
+  evidence: Evidence | null;
+  error: string | null;
+}
+
+export interface ProbeResult {
+  domain: string;
+  checkedAt: string;
+  verdict: ProbeVerdict;
+  /** One plain-English sentence; the panel shows its own wording per verdict. */
+  summary: string;
+  checks: ProbeCheck[];
+}
+
+const PROBE_LIMIT_PER_HOUR = 10;
+const PROBE_TIMEOUT_MS = 15_000;
+
+interface ProbeStep {
+  label: string;
+  method: "GET" | "POST";
+  path: string;
+  accept: string;
+  body?: Record<string, unknown>;
+}
+
+async function runProbeStep(domain: string, step: ProbeStep): Promise<ProbeCheck> {
+  const cfg = getConfig();
+  const base = { label: step.label, method: step.method, path: step.path };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`https://${domain}${step.path}`, {
+      method: step.method,
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        "user-agent": cfg.userAgent,
+        accept: step.accept,
+        "accept-language": "pl-PL,pl;q=0.9,en;q=0.8",
+        ...(step.body ? { "content-type": "application/json" } : {}),
+      },
+      ...(step.body ? { body: JSON.stringify(step.body) } : {}),
+    });
+    const text = await res.text().catch(() => "");
+    const evidence = collectEvidence(res.status, res.headers, text);
+    return { ...base, verdict: classify(evidence, parseJsonObject(text) !== null), evidence, error: null };
+  } catch (err) {
+    return { ...base, verdict: "network_error", evidence: null, error: (err as Error).message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function summarise(domain: string, checks: ProbeCheck[]): ProbeResult {
+  const login = checks[1]!;
+  const loginAnswers =
+    login.verdict === "api" && login.evidence !== null && ![403, 503].includes(login.evidence.status);
+  let verdict: ProbeVerdict;
+  let summary: string;
+
+  if (checks.some((c) => c.verdict === "wall")) {
+    verdict = "wall";
+    summary =
+      "Vinted's bot protection blocks requests from this server before any password is looked at. That is why a login always fails the same way, whatever is typed. The server cannot pass that check.";
+  } else if (checks.every((c) => c.verdict === "network_error")) {
+    verdict = "network";
+    summary = "This server could not reach Vinted at all (network error).";
+  } else if (loginAnswers) {
+    verdict = "reachable";
+    summary =
+      "The login endpoint answers this server with data, and bot protection did not block the request. If a login still reports a block, it happens at the password step.";
+  } else if (login.verdict === "not_api") {
+    verdict = "endpoint_missing";
+    summary =
+      "The login address returns a web page instead of login data. It has probably changed; this is not a problem with any password.";
+  } else if (checks.some((c) => c.verdict === "rate_limited")) {
+    verdict = "rate_limited";
+    summary = "Vinted is rate limiting this server (HTTP 429). Try again in a few minutes.";
+  } else {
+    verdict = "inconclusive";
+    summary =
+      "Vinted rejected a request, but the answer carries no recognisable bot-protection marker. Share the details so it can be judged.";
+  }
+  return { domain, checkedAt: new Date().toISOString(), verdict, summary, checks };
+}
+
+/**
+ * Asks Vinted three harmless questions from this server and reports exactly
+ * what came back - without sending any account data: the home page, the login
+ * endpoint with a placeholder refresh token (so no password and no account are
+ * involved) and a public API path. It tells a real bot-protection wall from a
+ * wrong address, which a failed login cannot.
+ *
+ * Capped per hour so it cannot become a way of hammering the site.
+ */
+export async function probeLogin(domainInput?: string): Promise<ProbeResult> {
+  const domain = checkDomain(domainInput ?? getConfig().defaultDomain);
+  const used = await getStore().incr(keys.probeCount(thisHour()), 7200);
+  if (used > PROBE_LIMIT_PER_HOUR) {
+    throw new LoginError(
+      "rate_limited",
+      `Connection checks are limited to ${PROBE_LIMIT_PER_HOUR} per hour. Wait a while before running another.`,
+    );
+  }
+  const steps: ProbeStep[] = [
+    { label: "Home page", method: "GET", path: endpoints.home(), accept: "text/html" },
+    {
+      label: "Login endpoint (no credentials sent)",
+      method: "POST",
+      path: endpoints.oauthToken(),
+      accept: "application/json",
+      body: {
+        client_id: LOGIN_FIELDS.clientId,
+        scope: LOGIN_FIELDS.scope,
+        grant_type: "refresh_token",
+        refresh_token: "connection-check",
+      },
+    },
+    { label: "Public API", method: "GET", path: endpoints.catalogs(), accept: "application/json" },
+  ];
+  const gap = getConfig().minRequestIntervalMs;
+  const checks: ProbeCheck[] = [];
+  for (const [index, step] of steps.entries()) {
+    if (index > 0 && gap > 0) await sleep(gap);
+    checks.push(await runProbeStep(domain, step));
+  }
+  return summarise(domain, checks);
 }
 
 const inflight = new Map<string, Promise<VintedAccount | null>>();

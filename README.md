@@ -215,10 +215,13 @@ tylko podglad i niczego nie wysyla.
   `src/vinted/endpoints.ts`, pola logowania w `src/vinted/login.ts`.
   Procedura weryfikacji: [docs/ACCOUNTS.md](docs/ACCOUNTS.md) i
   [docs/ACTIONS.md](docs/ACTIONS.md).
-- **Logowanie z serwera moze byc blokowane.** Vinted chroni logowanie przed
-  botami, a Vercel to ruch z serwerowni. Jesli zazada CAPTCHA, panel powie to
-  wprost i niczego nie bedzie obchodzil - konta wtedy nie podlaczysz, dopoki
-  Vinted nie przepusci.
+- **Logowanie z serwera moze byc blokowane.** Ochrona antybotowa Vinted dziala
+  przed sprawdzeniem hasla, a Vercel to ruch z serwerowni - taka blokada wyskakuje
+  przy kazdym hasle i dotyczy tez wyszukiwania, skrzynki i monitoringu. Panel
+  rozpoznaje ja tylko na dowodach i pokazuje szczegoly techniczne; przycisk
+  „Sprawdz polaczenie z Vinted" (Konta) rozstrzyga bez hasla, czy to blokada, czy
+  zly adres logowania. Panel niczego nie omija. Uczciwa droga przy prawdziwej
+  blokadzie to zapytania z Twojej przegladarki - [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 - **Ceny to ceny wywolawcze, nie transakcyjne.** `estimate_price` mowi to wprost.
 - **Bez Upstash nic nie jest trwale** - Pulpit i widok Kont ostrzegaja.
 - Automatyzacja akcji na koncie moze byc sprzeczna z regulaminem Vinted
@@ -229,7 +232,7 @@ tylko podglad i niczego nie wysyla.
 ```bash
 npm install
 npm run typecheck
-npm test            # 298 testow, nie dotykaja sieci
+npm test            # 361 testow, nie dotykaja sieci
 npm run demo        # panel z atrapa Vinted
 ```
 

@@ -15,6 +15,11 @@ import type { VercelLikeRequest, VercelLikeResponse } from "../src/http.js";
  * panel can be tried without an account or network access. Login password for
  * the pretend Vinted is "demo-pass"; a login name containing "2fa" asks for the
  * code 123456. This file is a development aid and is not deployed.
+ *
+ * DEMO_MODE changes how the pretend Vinted behaves, to try the error screens:
+ *   wall      every request gets a DataDome-style challenge (403 + captcha-delivery)
+ *   html404   the login address answers with a 404 web page that mentions DataDome
+ * A login name containing "wall" gets the challenge only at the login step.
  */
 
 process.env.ADMIN_PASSWORD ??= "demo";
@@ -58,15 +63,28 @@ const catalog = Array.from({ length: 14 }, (_, i) => ({
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 
+const MODE = process.env.DEMO_MODE ?? "";
+// Every ordinary Vinted page embeds DataDome's tag; that alone is not a block.
+const DD_TAG = '<script src="https://js.datadome.co/tags.js"></script>';
+const html = (status: number, body: string) =>
+  new Response(`<html><head>${DD_TAG}</head><body>${body}</body></html>`, { status, headers: { "content-type": "text/html" } });
+const wall = () =>
+  json(403, { url: "https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAAAAMADEMO0123456789abcdef" }, { "x-datadome": "protected" });
+
 function pretendVinted(url: URL, init?: RequestInit): Response {
   const method = init?.method ?? "GET";
   const path = url.pathname;
   const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
   const tokens = { access_token: "demo-access", refresh_token: "demo-refresh", expires_in: 7200 };
 
-  if (path === "/" && method === "GET") return new Response("<html></html>", { headers: { "content-type": "text/html" } });
+  if (MODE === "wall") return wall();
+  if (path === "/" && method === "GET") return html(200, "Vinted");
   if (path === "/oauth/token") {
-    if (body.grant_type === "refresh_token") return json(200, tokens);
+    if (MODE === "html404") return html(404, "Nie znaleziono strony - captcha");
+    if (body.grant_type === "refresh_token") {
+      return body.refresh_token === "demo-refresh" ? json(200, tokens) : json(400, { error: "invalid_grant" });
+    }
+    if (String(body.username).includes("wall")) return wall();
     // The code step carries the challenge token and the code, not the password.
     if (body.verification_code) {
       if (body.two_factor_token !== "demo-tft") return json(400, { error: "invalid_grant" });

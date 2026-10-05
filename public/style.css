@@ -171,6 +171,11 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 dialog pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: .6rem; border-radius: 6px; max-height: 14rem; overflow: auto; margin: .6rem 0; }
 dialog .row { justify-content: flex-end; margin-top: 1rem; }
 
+/* technical details under an error */
+details.tech { margin-top: .6rem; font-size: .9em; }
+details.tech summary { cursor: pointer; color: var(--muted); }
+details.tech pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); color: var(--text); padding: .5rem; border-radius: 6px; margin: .4rem 0; max-height: 14rem; overflow: auto; }
+
 /* login */
 .center { min-height: 100vh; display: grid; place-items: center; padding: 1rem 1rem; }
 .center .card { width: min(22rem, 100%); }

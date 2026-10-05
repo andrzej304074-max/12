@@ -88,6 +88,7 @@ export async function api(path, { method = "GET", body } = {}) {
     const err = new Error(data?.message || res.statusText);
     err.status = res.status;
     err.kind = data?.error;
+    err.details = data?.details;
     throw err;
   }
   return data;
@@ -103,6 +104,15 @@ export async function tool(name, args = {}) {
 /** For actions the person just triggered by hand: the click is the confirmation. */
 export function sendDirect(name, args = {}) {
   return tool(name, { ...args, confirm: true });
+}
+
+export async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Skopiowano");
+  } catch {
+    toast("Nie udało się skopiować — zaznacz tekst ręcznie.", true);
+  }
 }
 
 export function toast(message, bad = false) {

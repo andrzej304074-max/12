@@ -12,6 +12,7 @@ import {
 } from "../../vinted/accounts.js";
 import { getClient, VintedError } from "../../vinted/client.js";
 import { endpoints, probeTargets } from "../../vinted/endpoints.js";
+import { probeLogin } from "../../vinted/login.js";
 import { jsonResult } from "../protocol.js";
 import { ArgumentError, optBoolean, optString, requireString, type Tool } from "./types.js";
 
@@ -126,6 +127,24 @@ const diagnoseConnection: Tool = {
   },
 };
 
+const diagnoseLogin: Tool = {
+  name: "diagnose_login",
+  title: "Check what Vinted answers to this server",
+  description:
+    "Asks Vinted three harmless questions from this server - the home page, the login endpoint with a placeholder token, and a public API path - without sending any account data, and reports exactly what came back (HTTP status, server, bot-protection markers, a cleaned snippet). Use it when connecting an account fails: it tells a real bot-protection block from a wrong login address, which a failed login cannot. Limited to 10 per hour.",
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  inputSchema: {
+    type: "object",
+    properties: {
+      domain: { type: "string", description: "Marketplace host, e.g. www.vinted.pl. Defaults to VINTED_DOMAIN." },
+    },
+    additionalProperties: false,
+  },
+  async handler(args) {
+    return jsonResult(await probeLogin(optString(args, "domain")));
+  },
+};
+
 const testAccount: Tool = {
   name: "test_account",
   title: "Test an account's session",
@@ -225,6 +244,7 @@ const setAutoEnabled: Tool = {
 export const opsTools: Tool[] = [
   listAccountsTool,
   diagnoseConnection,
+  diagnoseLogin,
   testAccount,
   removeAccount,
   setAutoEnabled,

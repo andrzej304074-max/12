@@ -1,6 +1,7 @@
 import { getConfig, type VintedAccount } from "../config.js";
 import { log } from "../log.js";
 import { endpoints } from "./endpoints.js";
+import { classify, collectEvidence, describeEvidence, type Evidence } from "./evidence.js";
 import { assertVintedHost, HostError } from "./hosts.js";
 import { freshAccount, recoverAccount } from "./login.js";
 
@@ -141,6 +142,15 @@ export class VintedClient {
         continue;
       }
 
+      const text = await res.text().catch(() => "");
+      const evidence = collectEvidence(res.status, res.headers, text);
+      const isJson = /json/i.test(evidence.contentType ?? "") || /^\s*[{[]/.test(text);
+
+      // A challenge is final: retrying it would only hammer a protected site.
+      if (classify(evidence, isJson) === "wall") {
+        throw new VintedError(wallMessage(evidence), res.status, path);
+      }
+
       if (res.status === 429 || res.status >= 500) {
         const retryAfter = Number(res.headers.get("retry-after"));
         const waitMs = Number.isFinite(retryAfter)
@@ -169,27 +179,26 @@ export class VintedClient {
       if (res.status === 401 || res.status === 403) {
         throw new VintedError(
           account
-            ? `Vinted rejected the credentials for account "${account.id}" (${res.status}). The session has most likely expired - log in again in the panel (Accounts tab).`
-            : `Vinted refused an anonymous read (${res.status}).`,
+            ? `Vinted rejected the credentials for account "${account.id}" (${describeEvidence(evidence)}). The session has most likely expired - log in again in the panel (Accounts tab).`
+            : `Vinted refused an anonymous read (${describeEvidence(evidence)}). From a server this is often bot protection, but the answer has no recognisable marker.`,
           res.status,
           path,
         );
       }
 
       if (!res.ok) {
-        const body = await res.text().catch(() => "");
         throw new VintedError(
-          `unexpected ${res.status}: ${body.slice(0, 200)}`,
+          `unexpected answer (${describeEvidence(evidence)}): ${evidence.snippet}`,
           res.status,
           path,
         );
       }
 
       try {
-        return (await res.json()) as T;
-      } catch (err) {
+        return JSON.parse(text) as T;
+      } catch {
         throw new VintedError(
-          `response was not JSON, the endpoint shape has probably changed: ${(err as Error).message}`,
+          `Vinted answered with a web page instead of JSON (${describeEvidence(evidence)}); the endpoint has probably changed: ${evidence.snippet}`,
           res.status,
           path,
         );
@@ -258,31 +267,39 @@ export class VintedClient {
       const next = await recoverAccount(account);
       if (next) return this.send<T>(method, path, { ...opts, account: next }, true);
     }
+    const text = res.status === 204 ? "" : await res.text().catch(() => "");
+    const evidence = collectEvidence(res.status, res.headers, text);
+    const isJson = /json/i.test(evidence.contentType ?? "") || /^\s*[{[]/.test(text);
+    if (classify(evidence, isJson) === "wall") {
+      throw new RefusalError(wallMessage(evidence), res.status, path);
+    }
     if (res.status === 401 || res.status === 403) {
       throw new RefusalError(
-        `Vinted refused the action for account "${account.id}" (${res.status}). The session may have expired (log in again in the panel), or the action needs a CSRF token or a captcha.`,
+        `Vinted refused the action for account "${account.id}" (${describeEvidence(evidence)}). The session may have expired (log in again in the panel), or the action needs a CSRF token or a captcha.`,
         res.status,
         path,
       );
     }
-    const contentType = res.headers.get("content-type") ?? "";
-    if (res.ok && !contentType.includes("json") && res.status !== 204) {
+    if (res.ok && !isJson && res.status !== 204) {
       throw new RefusalError(
-        "Vinted answered with a page instead of JSON - most likely a challenge or captcha.",
+        `Vinted answered with a web page instead of JSON (${describeEvidence(evidence)}) - the endpoint has probably changed, or a challenge was served: ${evidence.snippet}`,
         res.status,
         path,
       );
     }
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
       throw new VintedError(
-        `action failed with ${res.status}: ${body.slice(0, 300)}`,
+        `action failed (${describeEvidence(evidence)}): ${evidence.snippet}`,
         res.status,
         path,
       );
     }
     if (res.status === 204) return {} as T;
-    return (await res.json().catch(() => ({}))) as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return {} as T;
+    }
   }
 }
 
@@ -293,6 +310,10 @@ export interface SendOptions {
   form?: FormData;
   query?: RequestOptions["query"];
   domain?: string;
+}
+
+function wallMessage(evidence: Evidence): string {
+  return `Vinted's bot protection blocked this request (${describeEvidence(evidence)}). A server cannot pass that check; nothing was bypassed and the request was not repeated.`;
 }
 
 /** Refuses any host that is not a Vinted marketplace, before a cookie is attached. */

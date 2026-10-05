@@ -2,6 +2,7 @@ import { log } from "../log.js";
 import { LimitError } from "../monitor/safety.js";
 import { AccountError } from "../vinted/accounts.js";
 import { VintedError } from "../vinted/client.js";
+import { LoginError } from "../vinted/login.js";
 import {
   ErrorCode,
   failure,
@@ -53,6 +54,7 @@ function toToolError(name: string, err: unknown): ToolResult {
     err instanceof ArgumentError ||
     err instanceof AccountError ||
     err instanceof LimitError ||
+    err instanceof LoginError ||
     err instanceof VintedError
   ) {
     return { content: [{ type: "text", text: err.message }], isError: true };

@@ -48,6 +48,7 @@ const LOGIN_STATUS: Record<LoginFailure, number> = {
   bad_code: 422,
   rate_limited: 429,
   blocked: 409,
+  rejected: 502,
   no_encryption: 503,
   unexpected: 502,
 };
@@ -245,7 +246,11 @@ export async function handleApp(
     sendJson(res, 404, { error: "not_found", message: `No route ${method} ${route}.` });
   } catch (err) {
     if (err instanceof LoginError) {
-      sendJson(res, LOGIN_STATUS[err.kind], { error: err.kind, message: err.message });
+      sendJson(res, LOGIN_STATUS[err.kind], {
+        error: err.kind,
+        message: err.message,
+        ...(err.details ? { details: err.details } : {}),
+      });
       return;
     }
     log.error("panel request failed", { route, message: (err as Error).message });

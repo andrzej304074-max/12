@@ -66,6 +66,7 @@ export const keys = {
   loginAttempts: (hash: string) => `loginattempts:${hash}`,
   loginVerifyAttempts: (loginId: string) => `loginverify:${loginId}`,
   loginLog: () => `loginlog`,
+  probeCount: (hour: string) => `cnt:probe:${hour}`,
   panelFails: (ip: string) => `panelfail:${ip}`,
   drafts: (accountId: string) => `drafts:${accountId}`,
   draft: (accountId: string, id: string) => `draft:${accountId}:${id}`,

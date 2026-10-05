@@ -157,6 +157,29 @@ describe("login with a verification code", () => {
     await expect(verifyLogin({ loginId: first.loginId, code: "000000" })).rejects.toMatchObject({ kind: "rate_limited" });
   });
 
+  it("ends the verification when the code step meets a real challenge", async () => {
+    let n = 0;
+    vinted({
+      "POST /oauth/token": () =>
+        ++n === 1 ? challenge() : jsonRes(403, { url: "https://geo.captcha-delivery.com/captcha/?x=1" }),
+    });
+    const first = await login();
+    if (first.status !== "challenge") throw new Error("expected challenge");
+    await expect(verifyLogin({ loginId: first.loginId, code: "123456" })).rejects.toMatchObject({ kind: "blocked" });
+    expect(await getStore().get(keys.loginState(first.loginId))).toBeNull();
+  });
+
+  it("keeps the verification open when Vinted merely rate limits the code step", async () => {
+    let n = 0;
+    vinted({
+      "POST /oauth/token": () => (++n === 1 ? challenge() : n === 2 ? jsonRes(429, {}) : jsonRes(200, TOKENS)),
+    });
+    const first = await login();
+    if (first.status !== "challenge") throw new Error("expected challenge");
+    await expect(verifyLogin({ loginId: first.loginId, code: "123456" })).rejects.toMatchObject({ kind: "rate_limited" });
+    expect(await verifyLogin({ loginId: first.loginId, code: "123456" })).toMatchObject({ status: "connected" });
+  });
+
   it("reports an unknown or expired verification", async () => {
     vinted();
     await expect(verifyLogin({ loginId: "nope", code: "123456" })).rejects.toMatchObject({ kind: "expired" });
@@ -176,14 +199,79 @@ describe("when Vinted pushes back", () => {
     expect(calls.filter((c) => c.url.pathname === "/oauth/token")).toHaveLength(1);
   });
 
-  it("treats a 429 as a block", async () => {
+  it("reports Vinted's rate limit as a rate limit, not as a block", async () => {
     vinted({ "POST /oauth/token": () => jsonRes(429, {}) });
-    await expect(login()).rejects.toMatchObject({ kind: "blocked" });
+    await expect(login()).rejects.toMatchObject({ kind: "rate_limited", message: expect.stringMatching(/Vinted is rate limiting/) });
   });
 
-  it("treats an HTML answer where JSON was expected as a block", async () => {
+  // The fix for a false alarm: ordinary Vinted pages mention "captcha" and
+  // "datadome", so a wrong address used to be reported as bot protection.
+  it("does not call an ordinary web page a block just because it mentions captcha", async () => {
     vinted({ "POST /oauth/token": () => htmlRes(200, "<html>captcha</html>") });
-    await expect(login()).rejects.toMatchObject({ kind: "blocked" });
+    await expect(login()).rejects.toMatchObject({
+      kind: "unexpected",
+      message: expect.stringMatching(/web page instead of login data/),
+      details: { status: 200, markers: [] },
+    });
+  });
+
+  it("does not call a 404 page that merely embeds DataDome a block", async () => {
+    const page = '<html><head><script src="https://js.datadome.co/tags.js"></script></head><body>Page not found - captcha</body></html>';
+    vinted({ "POST /oauth/token": () => htmlRes(404, page) });
+    const err = await login().catch((e) => e);
+    expect(err).toMatchObject({ kind: "unexpected", details: { status: 404, markers: [] } });
+    expect(err.message).toMatch(/not a problem with the password/);
+  });
+
+  it("recognises a real DataDome challenge and says the password was never looked at", async () => {
+    vinted({
+      "POST /oauth/token": () =>
+        jsonRes(403, { url: "https://geo.captcha-delivery.com/captcha/?initialCid=AHrlqAAAAAMA1234567890abcdefghijklmnop" }, { "x-datadome": "protected" }),
+    });
+    const err = await login().catch((e) => e);
+    expect(err).toMatchObject({ kind: "blocked", details: { status: 403 } });
+    expect(err.details.markers).toEqual(expect.arrayContaining(["header:x-datadome", "body:captcha-delivery.com"]));
+    expect(err.message).toMatch(/before looking at any password/);
+  });
+
+  it("reports a plain 403 without markers as rejected, saying it could not be confirmed", async () => {
+    vinted({ "POST /oauth/token": () => htmlRes(403, "<html><body>Forbidden</body></html>") });
+    await expect(login()).rejects.toMatchObject({
+      kind: "rejected",
+      message: expect.stringMatching(/HTTP 403 and did not say why/),
+    });
+  });
+
+  it("still recognises a verification step that arrives as a JSON 403", async () => {
+    vinted({ "POST /oauth/token": () => jsonRes(403, { error: "two_factor_required", two_factor_token: "t1", message: "SMS" }) });
+    expect(await login()).toMatchObject({ status: "challenge" });
+  });
+
+  it("does not follow redirects - a redirect is evidence", async () => {
+    const { calls } = vinted({
+      "POST /oauth/token": () => new Response(null, { status: 302, headers: { location: "https://www.vinted.pl/login?next=%2Foauth%2Ftoken&secret=abc" } }),
+    });
+    const err = await login().catch((e) => e);
+    expect(calls[0]!.init!.redirect).toBe("manual");
+    expect(err).toMatchObject({ kind: "unexpected", details: { status: 302, location: "https://www.vinted.pl/login" } });
+    expect(JSON.stringify(err.details)).not.toContain("secret=abc");
+  });
+
+  it("never shows the password or the login in the details, even if Vinted echoes them", async () => {
+    vinted({ "POST /oauth/token": () => htmlRes(403, `<html>Forbidden for ala@example.com / ${PASSWORD}</html>`) });
+    const err = await login().catch((e) => e);
+    const shown = JSON.stringify({ message: err.message, details: err.details });
+    expect(shown).not.toContain(PASSWORD);
+    expect(shown).not.toContain("ala@example.com");
+  });
+
+  it("logs the status and markers of a block, never the body", async () => {
+    vinted({
+      "POST /oauth/token": () => jsonRes(403, { url: "https://geo.captcha-delivery.com/captcha/?x=1" }, { "x-datadome": "protected" }),
+    });
+    await login().catch(() => undefined);
+    const [entry] = await getLoginLog();
+    expect(entry!.outcome).toBe("blocked http=403 header:x-datadome,body:captcha-delivery.com");
   });
 
   it("reports wrong credentials", async () => {
@@ -256,7 +344,7 @@ describe("keeping the session alive", () => {
 
   it("does not flag the account when the refresh is merely blocked", async () => {
     const account = await connected();
-    vinted({ "POST /oauth/token": () => htmlRes(403, "captcha") });
+    vinted({ "POST /oauth/token": () => htmlRes(403, '<html>captcha <a href="https://geo.captcha-delivery.com/c">x</a></html>') });
     expect(await recoverAccount(account)).toBeNull();
     expect((await listAccounts())[0]!.status).toBe("connected");
   });

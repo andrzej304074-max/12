@@ -167,6 +167,7 @@ przedmiocie, zeby sprawdzic sciezki zapisu - procedura w
 | --- | --- |
 | Deploy odrzucony z powodu crona | Plan Hobby: zostaw `0 7 * * *` w `vercel.json` |
 | Strona prosi o logowanie do Vercela | **Settings → Deployment Protection** → wylacz Vercel Authentication dla produkcji albo uzyj adresu z Overview → Domains, nie adresu konkretnego wdrozenia |
+| Dodawanie konta: „Vinted zablokowal to polaczenie ochrona antybotowa" przy kazdym hasle | To nie blad hasla. Konta → **Sprawdz polaczenie z Vinted** pokaze, co naprawde odpowiada Vinted temu serwerowi; zob. [ACCOUNTS.md](ACCOUNTS.md) |
 | Logowanie: „Panel jest wylaczony" | Brak `ADMIN_PASSWORD` - dodaj, Redeploy |
 | Konta: nie mozna dodac konta | Brak `ENCRYPTION_KEY` - dodaj, Redeploy |
 | Pulpit: Upstash „brak" | Dodaj zmienne Upstash (krok 6), Redeploy |

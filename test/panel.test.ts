@@ -302,3 +302,45 @@ describe("connecting an account", () => {
     expect(r.text).not.toContain("pw-not-to-leak");
   });
 });
+
+describe("login failures carry evidence to the page", () => {
+  const PASSWORD = "pw-not-to-leak";
+  const signedIn = async () => signIn();
+
+  it("returns a block with its markers and no secrets", async () => {
+    mockFetch(() => jsonRes(403, { url: "https://geo.captcha-delivery.com/captcha/?initialCid=AAAA" }, { "x-datadome": "protected" }));
+    const cookie = await signedIn();
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: PASSWORD } });
+    expect(r.status).toBe(409);
+    expect(r.json).toMatchObject({ error: "blocked", details: { status: 403 } });
+    expect(r.json.details.markers).toEqual(expect.arrayContaining(["header:x-datadome", "body:captcha-delivery.com"]));
+    expect(r.text).not.toContain(PASSWORD);
+    expect(r.text).not.toContain("ola@example.com");
+  });
+
+  it("returns a wrong address as unexpected with its status, not as a block", async () => {
+    mockFetch(() => new Response('<html><script src="https://js.datadome.co/tags.js"></script>Not found</html>', { status: 404, headers: { "content-type": "text/html" } }));
+    const cookie = await signedIn();
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: PASSWORD } });
+    expect(r.status).toBe(502);
+    expect(r.json).toMatchObject({ error: "unexpected", details: { status: 404, markers: [] } });
+  });
+
+  it("returns a plain 403 as rejected", async () => {
+    mockFetch(() => new Response("<html>Forbidden</html>", { status: 403, headers: { "content-type": "text/html" } }));
+    const cookie = await signedIn();
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: PASSWORD } });
+    expect(r.status).toBe(502);
+    expect(r.json.error).toBe("rejected");
+  });
+
+  it("runs the connection check through the tool endpoint", async () => {
+    mockFetch((url) =>
+      url.pathname === "/oauth/token" ? jsonRes(400, { error: "invalid_grant" }) : url.pathname === "/" ? new Response("<html></html>", { headers: { "content-type": "text/html" } }) : jsonRes(200, { catalogs: [] }),
+    );
+    const cookie = await signedIn();
+    const r = await call("/tool", { method: "POST", cookie, body: { name: "diagnose_login", arguments: { domain: "www.vinted.pl" } } });
+    expect(r.json.isError).toBe(false);
+    expect(r.json.data).toMatchObject({ verdict: "reachable", domain: "www.vinted.pl" });
+  });
+});
