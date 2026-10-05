@@ -3,7 +3,7 @@
  */
 
 const SECRET_KEYS =
-  /^(access_?token|session_?cookie|authorization|cookie|token|password|secret|mcp_?auth_?token|cron_?secret)$/i;
+  /^(access_?token|session_?cookie|authorization|cookie|token|password|secret|mcp_?auth_?token|cron_?secret|signing_?key|access_?key|webhook_?signing_?key|x-vpi-[a-z0-9-]+)$/i;
 
 /** Replaces secret-looking values anywhere in a structure with "[redacted]". */
 export function redact(value: unknown, depth = 0): unknown {

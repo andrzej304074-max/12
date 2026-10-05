@@ -39,6 +39,12 @@ export class MemoryStore implements Store {
     });
   }
 
+  async setNx<T>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+    if (this.live(key)) return false;
+    await this.set(key, value, ttlSeconds);
+    return true;
+  }
+
   async del(key: string): Promise<void> {
     this.map.delete(key);
     this.sets.delete(key);

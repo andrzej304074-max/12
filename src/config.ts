@@ -79,6 +79,26 @@ export interface Config {
   /** User-Agent sent to Vinted. Identifies this client honestly. */
   userAgent: string;
   isProduction: boolean;
+  /**
+   * Show the tools and panel views built on Vinted's unofficial consumer API.
+   * Off by default: that API is not covered by the official Pro Integrations
+   * API, is blocked for servers, and the Pro documentation says using it
+   * breaks Vinted's terms.
+   */
+  unofficialEnabled: boolean;
+  /** Vinted Pro Integrations (the official, partner-only API). */
+  pro: {
+    /** Overrides of the two documented hosts; checked in src/pro/hosts.ts. */
+    baseUrlSandbox: string | null;
+    baseUrlProduction: string | null;
+    /** Minimum gap between two requests to the Pro API, milliseconds. */
+    minRequestIntervalMs: number;
+    /** Retries for requests that are safe to repeat. */
+    maxRetries: number;
+    timeoutMs: number;
+  };
+  /** Vercel Blob read-write token; enables photo upload from the panel. */
+  blobToken: string | null;
 }
 
 function num(name: string, fallback: number): number {
@@ -194,6 +214,15 @@ export function getConfig(): Config {
       str("VINTED_USER_AGENT") ??
       "vinted-seller-mcp/1.0 (+https://github.com/andrzej304074-max/12)",
     isProduction: process.env.NODE_ENV === "production" || !!process.env.VERCEL,
+    unofficialEnabled: str("ENABLE_UNOFFICIAL") === "true",
+    pro: {
+      baseUrlSandbox: str("VINTED_PRO_BASE_URL_SANDBOX"),
+      baseUrlProduction: str("VINTED_PRO_BASE_URL_PRODUCTION"),
+      minRequestIntervalMs: num("VINTED_PRO_MIN_REQUEST_INTERVAL_MS", 300),
+      maxRetries: num("VINTED_PRO_MAX_RETRIES", 2),
+      timeoutMs: num("VINTED_PRO_TIMEOUT_MS", 30_000),
+    },
+    blobToken: str("BLOB_READ_WRITE_TOKEN"),
   };
   return cached;
 }

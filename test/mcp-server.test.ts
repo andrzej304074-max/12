@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { resetConfigCache } from "../src/config.js";
 import { PROTOCOL_VERSION } from "../src/mcp/protocol.js";
 import { handleMessage, handleRequest, SERVER_INFO } from "../src/mcp/server.js";
 import { allTools } from "../src/mcp/tools/index.js";
+
+// These tests exercise the whole tool set, including the unofficial tools that
+// are hidden by default (see test/features.test.ts for the default).
+beforeEach(() => {
+  process.env.ENABLE_UNOFFICIAL = "true";
+  resetConfigCache();
+});
 
 describe("initialize", () => {
   it("reports the protocol version, tool capability and server identity", async () => {

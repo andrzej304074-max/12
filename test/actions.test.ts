@@ -41,6 +41,7 @@ beforeEach(() => {
   delete process.env.VERCEL;
   process.env.VINTED_ACCOUNTS = JSON.stringify([{ id: "main", accessToken: "tok" }]);
   process.env.VINTED_MIN_REQUEST_INTERVAL_MS = "0";
+  process.env.ENABLE_UNOFFICIAL = "true";
   process.env.ACTIVE_HOURS = "0-0";
   resetConfigCache();
   resetStoreCache();

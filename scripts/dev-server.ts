@@ -5,6 +5,7 @@ import healthHandler from "../api/health.js";
 import mcpHandler from "../api/mcp.js";
 import { handleApp } from "../src/app/router.js";
 import type { VercelLikeRequest, VercelLikeResponse } from "../src/http.js";
+import { createFakePro } from "./fake-pro.js";
 
 /**
  * Local demo: the real panel and backend, with a pretend Vinted.
@@ -15,6 +16,12 @@ import type { VercelLikeRequest, VercelLikeResponse } from "../src/http.js";
  * panel can be tried without an account or network access. Login password for
  * the pretend Vinted is "demo-pass"; a login name containing "2fa" asks for the
  * code 123456. This file is a development aid and is not deployed.
+ *
+ * The Vinted Pro API is pretended too (scripts/fake-pro.ts): add a Vinted Pro
+ * account in the panel with the token  DEMO_ACCESS,demo-signing-secret  (any
+ * environment). The pretend checks every signature, so a wrong token shows the
+ * real "refused" screen. The consumer-API features are shown by default here;
+ * ENABLE_UNOFFICIAL=false hides them as a real deployment does.
  *
  * DEMO_MODE changes how the pretend Vinted behaves, to try the error screens:
  *   wall      every request gets a DataDome-style challenge (403 + captcha-delivery)
@@ -27,6 +34,8 @@ process.env.ENCRYPTION_KEY ??= "ab".repeat(32);
 process.env.MCP_AUTH_TOKEN ??= "demo-mcp-token";
 process.env.VINTED_MIN_REQUEST_INTERVAL_MS ??= "0";
 process.env.ACTIVE_HOURS ??= "0-0";
+process.env.ENABLE_UNOFFICIAL ??= "true";
+process.env.VINTED_PRO_MIN_REQUEST_INTERVAL_MS ??= "0";
 
 // ---------------------------------------------------------------- pretend Vinted
 const messages: Record<string, { id: number; entity_type: string; entity: Record<string, unknown>; created_at_ts: string }[]> = {
@@ -150,9 +159,13 @@ function pretendVinted(url: URL, init?: RequestInit): Response {
   return json(404, { error: "not_found_in_demo", path });
 }
 
+// ---------------------------------------------------------------- pretend Vinted Pro
+export const fakePro = createFakePro({ accessKey: "DEMO_ACCESS", signingKey: "demo-signing-secret" });
+
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url);
+  if (/^pro(-public-sandbox)?\.svc\.vinted\.com$/.test(url.hostname)) return fakePro.handle(url, init);
   if (/(^|\.)vinted\.[a-z.]+$/.test(url.hostname)) return pretendVinted(url, init);
   return realFetch(input, init);
 }) as typeof fetch;
@@ -185,4 +198,5 @@ const port = Number(process.env.PORT ?? 3000);
 server.listen(port, () => {
   console.log(`Demo panel: http://localhost:${port}  (password: ${process.env.ADMIN_PASSWORD})`);
   console.log('Pretend Vinted login password: "demo-pass"; a login containing "2fa" asks for code 123456.');
+  console.log("Pretend Vinted Pro token: DEMO_ACCESS,demo-signing-secret");
 });

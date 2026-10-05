@@ -11,6 +11,8 @@
 export interface Store {
   get<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T, ttlSeconds?: number): Promise<void>;
+  /** Sets the key only if it does not exist yet; true when this call set it. */
+  setNx<T>(key: string, value: T, ttlSeconds?: number): Promise<boolean>;
   del(key: string): Promise<void>;
   sadd(key: string, ...members: string[]): Promise<void>;
   srem(key: string, ...members: string[]): Promise<void>;
@@ -73,6 +75,14 @@ export const keys = {
   templates: () => `templates`,
   inboxSeen: (accountId: string) => `inboxseen:${accountId}`,
   inboxSeeded: (accountId: string) => `inboxseeded:${accountId}`,
+  // Vinted Pro (official API) accounts and their data.
+  proAccountIds: () => `pro:accounts`,
+  proAccount: (id: string) => `pro:account:${id}`,
+  proOntology: (id: string) => `pro:ontology:${id}`,
+  proEvents: (id: string) => `pro:events:${id}`,
+  proActions: (id: string) => `pro:actions:${id}`,
+  proItems: (id: string) => `pro:items:${id}`,
+  proSeen: (hash: string) => `pro:seen:${hash}`,
 };
 
 /** UTC day stamp used to scope the per-day action counters. */

@@ -17,6 +17,7 @@ let base: string;
 
 beforeAll(async () => {
   process.env.MCP_AUTH_TOKEN = "test-secret";
+  process.env.ENABLE_UNOFFICIAL = "true";
   delete process.env.VERCEL;
   process.env.NODE_ENV = "test";
   resetConfigCache();
@@ -37,6 +38,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   process.env.MCP_AUTH_TOKEN = "test-secret";
+  process.env.ENABLE_UNOFFICIAL = "true";
   resetConfigCache();
 });
 

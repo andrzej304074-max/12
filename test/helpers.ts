@@ -12,11 +12,15 @@ export function freshEnv(extra: Record<string, string | undefined> = {}) {
     "VERCEL", "MCP_AUTH_TOKEN", "ADMIN_PASSWORD", "SESSION_SECRET", "ENCRYPTION_KEY",
     "VINTED_ACCOUNTS", "NOTIFY_WEBHOOK_URL", "AUTO_ACTIONS_ENABLED", "ACTIVE_HOURS",
     "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "KV_REST_API_URL", "KV_REST_API_TOKEN", "CRON_SECRET",
+    "ENABLE_UNOFFICIAL", "BLOB_READ_WRITE_TOKEN", "VINTED_PRO_BASE_URL_SANDBOX", "VINTED_PRO_BASE_URL_PRODUCTION",
+    "VINTED_PRO_MIN_REQUEST_INTERVAL_MS", "VINTED_PRO_MAX_RETRIES", "VINTED_PRO_TIMEOUT_MS",
   ]) {
     delete process.env[key];
   }
   process.env.NODE_ENV = "test";
   process.env.VINTED_MIN_REQUEST_INTERVAL_MS = "0";
+  process.env.VINTED_PRO_MIN_REQUEST_INTERVAL_MS = "0";
+  process.env.ENABLE_UNOFFICIAL = "true";
   process.env.ACTIVE_HOURS = "0-0";
   process.env.ENCRYPTION_KEY = TEST_KEY;
   for (const [key, value] of Object.entries(extra)) {

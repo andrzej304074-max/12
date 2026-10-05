@@ -50,6 +50,12 @@ export class UpstashStore implements Store {
     await this.command(args);
   }
 
+  async setNx<T>(key: string, value: T, ttlSeconds?: number): Promise<boolean> {
+    const args: (string | number)[] = ["SET", key, JSON.stringify(value), "NX"];
+    if (ttlSeconds) args.push("EX", Math.ceil(ttlSeconds));
+    return (await this.command<string | null>(args)) === "OK";
+  }
+
   async del(key: string): Promise<void> {
     await this.command(["DEL", key]);
   }

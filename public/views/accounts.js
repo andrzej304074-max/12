@@ -1,4 +1,5 @@
 import { add, api, avatar, copyText, fail, field, h, pill, runAction, state, table, toast, tool, ago } from "../lib.js";
+import { proAccountsCard } from "./pro-accounts.js";
 
 const MARKETS = [
   "www.vinted.pl", "www.vinted.de", "www.vinted.fr", "www.vinted.co.uk", "www.vinted.lt",
@@ -117,7 +118,31 @@ export async function render(root, ctx) {
   const probeMarket = h("select", { "aria-label": "Rynek do sprawdzenia", style: "width:auto" }, MARKETS.map((m) => h("option", { value: m }, m)));
   probeMarket.value = data.defaultDomain || MARKETS[0];
 
-  add(root, 
+  const storageWarning =
+    state.me?.setup && state.me.setup.durableStorage === false
+      ? h(
+          "div",
+          { class: "notice warn" },
+          "Brak trwałego magazynu (Upstash Redis): podłączone konta, obserwowani i limity znikną, gdy funkcja na Vercel się wyłączy. Ustaw UPSTASH_REDIS_REST_URL i UPSTASH_REDIS_REST_TOKEN, zanim podłączysz konta.",
+        )
+      : null;
+  const encryptionWarning = !data.encryptionKey
+    ? h(
+        "div",
+        { class: "notice warn" },
+        "Brak ENCRYPTION_KEY: nie da się zapisać tokenu ani podłączyć konta przez panel. Wygeneruj klucz (openssl rand -hex 32), dodaj go w ustawieniach projektu na Vercel i wdróż ponownie.",
+      )
+    : null;
+
+  // The official Vinted Pro API is all there is unless the server turned the
+  // unofficial consumer features back on.
+  if (!state.me?.features?.unofficial) {
+    add(root, storageWarning, encryptionWarning, proAccountsCard());
+    return;
+  }
+
+  add(root,
+    proAccountsCard(),
     state.me?.setup && state.me.setup.durableStorage === false
       ? h(
           "div",

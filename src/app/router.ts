@@ -1,4 +1,6 @@
 import { getConfig } from "../config.js";
+import { CryptoError } from "../crypto.js";
+import { unofficialEnabled } from "../features.js";
 import {
   header,
   readJsonBody,
@@ -18,6 +20,9 @@ import {
   registerFailure,
   verifySession,
 } from "../session.js";
+import { saveProAccount } from "../pro/accounts.js";
+import { ProInputError } from "../pro/errors.js";
+import { isProEnv } from "../pro/hosts.js";
 import { getStore } from "../store/index.js";
 import { listAccountSummaries } from "../vinted/accounts.js";
 import {
@@ -34,9 +39,10 @@ import {
  * Every route is ONE path segment (see routeOf). Everything except /login and
  * /me needs a valid session. The panel does not
  * reimplement any feature: /tool runs the same tool handlers the MCP endpoint
- * runs, through the same callTool(). Only the account login (which carries a
- * password and a verification code) has dedicated routes, because that data
- * must never travel through a tool call or an MCP client.
+ * runs, through the same callTool(). Only the routes that carry a secret - the
+ * account login (password, verification code) and the Vinted Pro token - are
+ * dedicated, because that data must never travel through a tool call or an MCP
+ * client.
  */
 
 const BODY_LIMIT = 4_000_000;
@@ -74,6 +80,19 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * Reads a body that carries a secret. A JSON syntax error from the parser can
+ * quote the text it choked on, so the real message is never passed on: it
+ * could put a password or a token into a response or a log line.
+ */
+async function readSecretBody(req: VercelLikeRequest): Promise<Record<string, unknown>> {
+  try {
+    return asObject(await readJsonBody(req));
+  } catch (err) {
+    throw new ProInputError(/too large/i.test((err as Error).message) ? "The request is too large." : "The request body is not valid JSON.");
+  }
 }
 
 function setupFlags() {
@@ -125,7 +144,9 @@ export async function handleApp(
       sendJson(res, 200, {
         authenticated,
         passwordConfigured: cfg.adminPassword !== null,
-        ...(authenticated ? { setup: setupFlags(), server: SERVER_INFO } : {}),
+        ...(authenticated
+          ? { setup: setupFlags(), server: SERVER_INFO, features: { pro: true, unofficial: unofficialEnabled() } }
+          : {}),
       });
       return;
     }
@@ -221,7 +242,7 @@ export async function handleApp(
     }
 
     if (route === "/account-login" && method === "POST") {
-      const body = asObject(await readJsonBody(req));
+      const body = await readSecretBody(req);
       const result = await startLogin({
         ...(typeof body.domain === "string" ? { domain: body.domain } : {}),
         email: typeof body.email === "string" ? body.email : "",
@@ -234,7 +255,7 @@ export async function handleApp(
     }
 
     if (route === "/account-verify" && method === "POST") {
-      const body = asObject(await readJsonBody(req));
+      const body = await readSecretBody(req);
       const result = await verifyLogin({
         loginId: typeof body.loginId === "string" ? body.loginId : "",
         code: typeof body.code === "string" ? body.code : "",
@@ -243,8 +264,31 @@ export async function handleApp(
       return;
     }
 
+    if (route === "/pro-account" && method === "POST") {
+      const body = await readSecretBody(req);
+      if (!isProEnv(body.env)) {
+        throw new ProInputError("The environment must be sandbox or production.");
+      }
+      const account = await saveProAccount({
+        label: typeof body.label === "string" ? body.label : "",
+        env: body.env,
+        token: typeof body.token === "string" ? body.token : "",
+        ...(typeof body.accountId === "string" && body.accountId ? { id: body.accountId } : {}),
+      });
+      sendJson(res, 200, { account });
+      return;
+    }
+
     sendJson(res, 404, { error: "not_found", message: `No route ${method} ${route}.` });
   } catch (err) {
+    if (err instanceof ProInputError) {
+      sendJson(res, 400, { error: "invalid_input", message: err.message });
+      return;
+    }
+    if (err instanceof CryptoError) {
+      sendJson(res, 503, { error: "no_encryption", message: err.message });
+      return;
+    }
     if (err instanceof LoginError) {
       sendJson(res, LOGIN_STATUS[err.kind], {
         error: err.kind,

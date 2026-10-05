@@ -1,6 +1,14 @@
 import { api, fail, h, state, tool } from "./lib.js";
 
-const VIEWS = [
+// Views of the official Vinted Pro integration: always there.
+const OFFICIAL_VIEWS = [
+  ["accounts", "Konta"],
+  ["mcp", "MCP"],
+];
+
+// Views built on the unofficial consumer API: shown only when the server has
+// ENABLE_UNOFFICIAL=true (the page learns it from /me).
+const ALL_VIEWS = [
   ["messages", "Wiadomości"],
   ["dashboard", "Pulpit"],
   ["accounts", "Konta"],
@@ -12,6 +20,9 @@ const VIEWS = [
   ["automation", "Automatyka"],
   ["mcp", "MCP"],
 ];
+
+const unofficial = () => Boolean(state.me?.features?.unofficial);
+const views = () => (unofficial() ? ALL_VIEWS : OFFICIAL_VIEWS);
 
 const $ = (id) => document.getElementById(id);
 const badges = { messages: 0, finds: 0 };
@@ -102,7 +113,7 @@ function renderSwitch() {
 
 function renderNav(active) {
   $("nav").replaceChildren(
-    ...VIEWS.map(([id, label]) =>
+    ...views().map(([id, label]) =>
       h(
         "a",
         { href: `#/${id}`, class: id === active ? "active" : "" },
@@ -120,7 +131,7 @@ export function setBadge(id, count) {
 
 function currentView() {
   const id = location.hash.replace(/^#\//, "");
-  return VIEWS.some(([v]) => v === id) ? id : "dashboard";
+  return views().some(([v]) => v === id) ? id : views()[0][0];
 }
 
 async function route() {
@@ -129,7 +140,7 @@ async function route() {
   cleanups.forEach((fn) => fn());
   cleanups = [];
   renderNav(id);
-  $("title").textContent = VIEWS.find(([v]) => v === id)[1];
+  $("title").textContent = views().find(([v]) => v === id)[1];
   const root = $("view");
   root.replaceChildren(h("p", { class: "muted" }, "Ładowanie…"));
   try {
@@ -150,7 +161,7 @@ async function route() {
 }
 
 async function pollBadges() {
-  if (document.hidden || state.accounts.length === 0) return;
+  if (!unofficial() || document.hidden || state.accounts.length === 0) return;
   try {
     const inbox = await tool("list_conversations", { all_accounts: true, unread_only: true });
     badges.messages = inbox.unread || 0;
@@ -177,7 +188,7 @@ async function start() {
     $("login").hidden = true;
     $("app").hidden = false;
     await refreshAccounts();
-    if (!location.hash) location.hash = state.accounts.length ? "#/messages" : "#/accounts";
+    if (!location.hash) location.hash = unofficial() && state.accounts.length ? "#/messages" : "#/accounts";
     await route();
     pollBadges();
   } catch (err) {
