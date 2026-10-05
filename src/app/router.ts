@@ -25,7 +25,7 @@ import { ProError, ProInputError, type ProErrorKind } from "../pro/errors.js";
 import { isProEnv } from "../pro/hosts.js";
 import { compactOntology, loadOntology } from "../pro/ontology.js";
 import { getLabel } from "../pro/orders.js";
-import { PhotoUploadUnavailable, uploadPhoto } from "../pro/photos.js";
+import { PhotoStoreError, PhotoUploadUnavailable, uploadPhoto } from "../pro/photos.js";
 import { getStore } from "../store/index.js";
 import { listAccountSummaries } from "../vinted/accounts.js";
 import {
@@ -331,6 +331,10 @@ export async function handleApp(
   } catch (err) {
     if (err instanceof PhotoUploadUnavailable) {
       sendJson(res, 503, { error: "blob_not_configured", message: err.message });
+      return;
+    }
+    if (err instanceof PhotoStoreError) {
+      sendJson(res, 502, { error: "photo_store_failed", message: err.message });
       return;
     }
     if (err instanceof ProError) {

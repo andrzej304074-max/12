@@ -270,6 +270,28 @@ describe("photo upload", () => {
     expect(put).not.toHaveBeenCalled();
   });
 
+  it("reports a store failure in plain words and never repeats the token", async () => {
+    ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token" }));
+    const cookie = await signIn();
+    put.mockRejectedValueOnce(new Error(`Vercel Blob: access denied for blob-token\n${"x".repeat(500)}`));
+    const r = await call("/pro-upload", { method: "POST", body: { base64: JPEG }, cookie });
+    expect(r.status).toBe(502);
+    expect(r.json.error).toBe("photo_store_failed");
+    expect(r.json.message).toMatch(/refused the upload/);
+    expect(r.json.message).toMatch(/public access/);
+    expect(r.text).not.toContain("blob-token");
+    expect(r.json.message.length).toBeLessThan(500);
+  });
+
+  it("does not accept an address that is not https in production", async () => {
+    ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token", NODE_ENV: "production" }));
+    const cookie = await signIn();
+    put.mockResolvedValueOnce({ url: "http://store.example/p.jpg", pathname: "p.jpg", contentType: "image/jpeg" });
+    const r = await call("/pro-upload", { method: "POST", body: { base64: JPEG }, cookie });
+    expect(r.status).toBe(400);
+    expect(r.json.message).toMatch(/not https/);
+  });
+
   it("needs a session and the panel's own origin", async () => {
     ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token" }));
     expect((await call("/pro-upload", { method: "POST", body: { base64: JPEG } })).status).toBe(401);

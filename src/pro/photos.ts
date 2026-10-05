@@ -20,14 +20,34 @@ import { ProInputError } from "./errors.js";
 export class PhotoUploadUnavailable extends Error {
   constructor() {
     super(
-      "Photo upload is not set up. Create a Blob store in the Vercel project (Storage -> Create -> Blob), connect it to this project so BLOB_READ_WRITE_TOKEN is set, and redeploy. Until then paste the addresses of photos that are already online.",
+      "Photo upload is not set up. Create a Blob store with public access in the Vercel project (Storage -> Create -> Blob), connect it to this project so BLOB_READ_WRITE_TOKEN is set, and redeploy. Until then paste the addresses of photos that are already online.",
     );
     this.name = "PhotoUploadUnavailable";
   }
 }
 
+/** The store was reached (or not) but did not take the photo. */
+export class PhotoStoreError extends Error {
+  constructor(detail: string) {
+    super(
+      `The photo store refused the upload (${detail}). Check that the Vercel Blob store was created with public access, that it is connected to this project, and that it is not suspended.`,
+    );
+    this.name = "PhotoStoreError";
+  }
+}
+
+/** What the store said, without the token and without anything long. */
+function describeStoreFailure(err: unknown, token: string): string {
+  const raw = err instanceof Error ? err.message : "unknown error";
+  const clean = raw.split(token).join("[token]").replace(/\s+/g, " ").trim();
+  return clean === "" ? "unknown error" : clean.slice(0, 200);
+}
+
 /** Raw bytes; base64 of this still fits a 4.5 MB request. */
 export const MAX_PHOTO_BYTES = 3_000_000;
+
+/** Longest the store gets to answer; the panel function is limited to 60 s. */
+const STORE_TIMEOUT_MS = 25_000;
 
 const FORMATS = {
   jpeg: { type: "image/jpeg", ext: "jpg" },
@@ -52,7 +72,14 @@ export function sniffImage(bytes: Uint8Array): (typeof FORMATS)[keyof typeof FOR
  */
 export const photoBackend = {
   put: (pathname: string, body: Buffer, options: { contentType: string; token: string }) =>
-    put(pathname, body, { access: "public", addRandomSuffix: false, allowOverwrite: false, ...options }),
+    put(pathname, body, {
+      access: "public",
+      addRandomSuffix: false,
+      allowOverwrite: false,
+      // The SDK retries server errors for minutes, and the function has one.
+      abortSignal: AbortSignal.timeout(STORE_TIMEOUT_MS),
+      ...options,
+    }),
 };
 
 export interface UploadedPhoto {
@@ -79,7 +106,12 @@ export async function uploadPhoto(base64: string): Promise<UploadedPhoto> {
 
   const month = new Date().toISOString().slice(0, 7);
   const pathname = `pro-photos/${month}/${randomBytes(12).toString("hex")}.${format.ext}`;
-  const blob = await photoBackend.put(pathname, bytes, { contentType: format.type, token });
+  let blob: { url: string };
+  try {
+    blob = await photoBackend.put(pathname, bytes, { contentType: format.type, token });
+  } catch (err) {
+    throw new PhotoStoreError(describeStoreFailure(err, token));
+  }
   // Vinted fetches the photo itself, so only a public https address is any use
   // (plain http is accepted outside production, for the local demo).
   const allowed = getConfig().isProduction ? /^https:\/\//i : /^https?:\/\//i;

@@ -185,8 +185,10 @@ marketplace'ow.
 W formularzu **Wystaw** masz dwie drogi:
 
 1. **Wklej adres** zdjecia, ktore juz jest w internecie.
-2. **Wgraj plik** - dziala, gdy do projektu na Vercelu podlaczono sklep
-   **Vercel Blob** (zmienna `BLOB_READ_WRITE_TOKEN`; krok w [DEPLOY.md](DEPLOY.md)).
+2. **Wgraj plik** - dziala, gdy do projektu na Vercelu podlaczono **publiczny**
+   sklep **Vercel Blob** (zmienna `BLOB_READ_WRITE_TOKEN`; krok w
+   [DEPLOY.md](DEPLOY.md)). Sklep prywatny odrzuci wgranie, a Vinted i tak nie
+   pobralby z niego zdjecia.
    Bez niego przycisk wgrywania pokazuje, czego brakuje, a adresy dzialaja jak
    dotad. Pulpit pokazuje, czy wgrywanie jest skonfigurowane.
 

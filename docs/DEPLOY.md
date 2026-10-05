@@ -137,7 +137,9 @@ Upstash (rozmiar pojedynczego zadania i liczbe polecen).
 API Vinted Pro przyjmuje tylko **publiczne, trwale adresy URL** zdjec. Bez Bloba
 wklejasz adresy zdjec, ktore juz sa w internecie. Zeby wgrywac zdjecia z panelu:
 
-1. W projekcie: **Storage -> Create Database -> Blob**, **Connect Project**.
+1. W projekcie: **Storage -> Create Database -> Blob**. Wybierz sklep **publiczny**
+   (Public) - Vinted musi moc pobrac zdjecie spod jego adresu, a do sklepu
+   prywatnego wgranie zdjecia sie nie uda. Potem **Connect Project**.
 2. Vercel dodaje `BLOB_READ_WRITE_TOKEN`. Zrob Redeploy.
 
 Pulpit pokazuje „Wgrywanie zdjec: ok". Panel zmniejsza zdjecia w przegladarce, a
@@ -208,6 +210,7 @@ zacznij od jednej oferty jako szkicu.
 | Zdarzenia: odrzucone dostawy z `fromParsed` | Dodaj `NODEJS_HELPERS=0` i zrob Redeploy |
 | Zdarzenia: odrzucone dostawy bez `fromParsed` | Zly klucz podpisu (zarejestruj webhook ponownie), stary znacznik czasu (zegar) albo inny adres niz zarejestrowany |
 | Wystaw: „Photo upload is not set up" | Dodaj sklep Blob (krok 7) albo wklej adresy zdjec |
+| Wystaw: „The photo store refused the upload" | Sklep Blob jest prywatny, wylaczony albo nalezy do innego projektu - utworz publiczny, polacz z tym projektem, Redeploy |
 | Klient MCP dostaje blad 500 / „no shared secret" | Brak `MCP_AUTH_TOKEN` - dodaj, Redeploy |
 | Cron zwraca 401 | Brak `CRON_SECRET` (Vercel wysyla go sam) - dodaj, Redeploy |
 | Cron zwraca „skipped" | Brak Upstash - dodaj baze |
