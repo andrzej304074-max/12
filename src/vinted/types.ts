@@ -48,6 +48,7 @@ export interface NormalisedItem {
   condition: string | null;
   url: string | null;
   favourites: number | null;
+  views?: number | null;
   sellerId: string | null;
   sellerLogin: string | null;
   photoUrl: string | null;
@@ -94,6 +95,7 @@ export function normaliseItem(
     condition: item.status ?? null,
     url: item.url ?? `https://${domain}/items/${item.id}`,
     favourites: item.favourite_count ?? null,
+    views: item.view_count ?? null,
     sellerId: item.user?.id !== undefined ? String(item.user.id) : null,
     sellerLogin: item.user?.login ?? null,
     photoUrl: photo,

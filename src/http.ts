@@ -18,7 +18,10 @@ export type VercelLikeResponse = ServerResponse;
 const MAX_BODY_BYTES = 1_000_000;
 
 /** Reads and parses a JSON body, using Vercel's pre-parsed one when present. */
-export async function readJsonBody(req: VercelLikeRequest): Promise<unknown> {
+export async function readJsonBody(
+  req: VercelLikeRequest,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<unknown> {
   if (req.body !== undefined && req.body !== null && req.body !== "") {
     if (typeof req.body === "string") return JSON.parse(req.body);
     return req.body;
@@ -28,7 +31,7 @@ export async function readJsonBody(req: VercelLikeRequest): Promise<unknown> {
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string);
     total += buf.length;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBytes) {
       throw new Error("Request body is too large.");
     }
     chunks.push(buf);

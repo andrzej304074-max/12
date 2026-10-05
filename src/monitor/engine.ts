@@ -1,10 +1,13 @@
 import { getConfig, type VintedAccount } from "../config.js";
 import { log } from "../log.js";
+import { getSettings } from "../settings.js";
 import { getStore, keys } from "../store/index.js";
+import { listAccounts } from "../vinted/accounts.js";
 import { likeItem, sendOffer } from "../vinted/actions.js";
 import { RefusalError } from "../vinted/client.js";
 import { getSellerItems } from "../vinted/search.js";
 import type { NormalisedItem } from "../vinted/types.js";
+import { checkInbox } from "./inbox-watch.js";
 import { formatFinds, notify } from "./notify.js";
 import { checkBudget, getLimits, LimitError } from "./safety.js";
 
@@ -140,6 +143,8 @@ export interface PassResult {
   /** Why the automatic queue stopped early, if it did. */
   autoStoppedBecause: string | null;
   notified: boolean;
+  /** New unread messages found by the cron pass (set by runPass only). */
+  newMessages?: number;
 }
 
 const FIND_TTL = 60 * 60 * 24 * 30;
@@ -153,7 +158,7 @@ export async function processAutoQueue(
   account: VintedAccount,
   result: PassResult,
 ): Promise<void> {
-  if (!getConfig().autoActionsEnabled) return;
+  if (!(await getSettings()).autoActionsEnabled) return;
   const store = getStore();
   const queue = (await listFinds(account.id))
     .filter((f) => f.autoPending?.length)
@@ -258,7 +263,7 @@ export async function runPassForAccount(
       if (fresh.length === 0) continue;
 
       const discountPct = watch.discountPct ?? limits.discountPct;
-      const autoPending: AutoKind[] = cfg.autoActionsEnabled
+      const autoPending: AutoKind[] = (await getSettings()).autoActionsEnabled
         ? [
             ...(watch.autoLike ? (["like"] as const) : []),
             ...(watch.autoOffer ? (["offer"] as const) : []),
@@ -305,10 +310,19 @@ export async function runPassForAccount(
 
 /** Runs a monitoring pass for every configured account. */
 export async function runPass(): Promise<PassResult[]> {
-  const cfg = getConfig();
   const results: PassResult[] = [];
-  for (const account of cfg.accounts) {
-    results.push(await runPassForAccount(account));
+  for (const account of await listAccounts()) {
+    // A session that expired needs a fresh login in the panel; polling with
+    // it would only produce 401s.
+    if (account.status === "needs_login") continue;
+    const result = await runPassForAccount(account);
+    try {
+      const inbox = await checkInbox(account);
+      result.newMessages = inbox.newMessages;
+    } catch (err) {
+      result.errors.push({ sellerId: "inbox", message: (err as Error).message });
+    }
+    results.push(result);
   }
   await getStore().set(keys.lastRun(), new Date().toISOString());
   return results;

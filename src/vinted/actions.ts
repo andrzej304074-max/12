@@ -163,6 +163,67 @@ export function publishListing(account: VintedAccount, payload: PublishPayload) 
   );
 }
 
+export function replyToConversation(
+  account: VintedAccount,
+  conversationId: string,
+  text: string,
+) {
+  return perform(account, "message", null, false, () =>
+    getClient().send("POST", endpoints.conversationMessage(conversationId), {
+      account,
+      body: { body: text },
+    }),
+  );
+}
+
+export function respondToOffer(
+  account: VintedAccount,
+  conversationId: string,
+  offerId: string,
+  accept: boolean,
+) {
+  return perform(account, "respond", null, false, () =>
+    getClient().send("POST", endpoints.respondOffer(conversationId, offerId, accept), {
+      account,
+    }),
+  );
+}
+
+/** Uploads one photo; returns Vinted's photo id for use in publish_listing. */
+export function uploadPhoto(account: VintedAccount, bytes: Uint8Array, mime: string) {
+  return perform(account, "upload", null, false, async () => {
+    const form = new FormData();
+    form.set("photo[type]", "item");
+    form.set("photo[temp_uuid]", crypto.randomUUID());
+    form.set(
+      "photo[file]",
+      new Blob([Buffer.from(bytes)], { type: mime }),
+      mime === "image/png" ? "photo.png" : "photo.jpg",
+    );
+    return getClient().send<{ id?: number; photo?: { id?: number } }>(
+      "POST",
+      endpoints.photos(),
+      { account, form },
+    );
+  });
+}
+
+export interface ListingEdit {
+  title?: string;
+  description?: string;
+  price?: number;
+}
+
+export function updateListing(account: VintedAccount, itemId: string, edit: ListingEdit) {
+  const item: Record<string, unknown> = {};
+  if (edit.title !== undefined) item.title = edit.title;
+  if (edit.description !== undefined) item.description = edit.description;
+  if (edit.price !== undefined) item.price = edit.price.toFixed(2);
+  return perform(account, "update", itemId, false, () =>
+    getClient().send("PUT", endpoints.updateItem(itemId), { account, body: { item } }),
+  );
+}
+
 export function deleteListing(account: VintedAccount, itemId: string) {
   return perform(account, "delete", itemId, false, () =>
     getClient().send("DELETE", endpoints.deleteItem(itemId), { account }),

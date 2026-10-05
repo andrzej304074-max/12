@@ -1,6 +1,8 @@
 import { getConfig, type VintedAccount } from "../config.js";
 import { log } from "../log.js";
 import { endpoints } from "./endpoints.js";
+import { assertVintedHost, HostError } from "./hosts.js";
+import { freshAccount, recoverAccount } from "./login.js";
 
 /**
  * Minimal read client for Vinted's web API.
@@ -104,8 +106,10 @@ export class VintedClient {
 
   /** Performs a GET against the Vinted API and parses the JSON body. */
   async get<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-    const domain = opts.domain ?? opts.account?.domain ?? this.cfg.defaultDomain;
+    const domain = hostFor(opts.domain ?? opts.account?.domain ?? this.cfg.defaultDomain, path);
     if (!opts.account) await this.ensureAnonSession(domain);
+    let account = opts.account ? await freshAccount(opts.account) : undefined;
+    let recovered = false;
 
     const url = new URL(`https://${domain}${path}`);
     for (const [key, value] of Object.entries(opts.query ?? {})) {
@@ -124,7 +128,7 @@ export class VintedClient {
             "user-agent": this.cfg.userAgent,
             accept: "application/json",
             "accept-language": "pl-PL,pl;q=0.9,en;q=0.8",
-            cookie: this.cookieHeader(opts.account),
+            cookie: this.cookieHeader(account),
           },
         });
       } catch (err) {
@@ -152,10 +156,20 @@ export class VintedClient {
         continue;
       }
 
+      if (res.status === 401 && account && !recovered) {
+        // Session expired: renew it once from the refresh token and retry.
+        const next = await recoverAccount(account);
+        if (next) {
+          account = next;
+          recovered = true;
+          continue;
+        }
+      }
+
       if (res.status === 401 || res.status === 403) {
         throw new VintedError(
-          opts.account
-            ? `Vinted rejected the credentials for account "${opts.account.id}" (${res.status}). The access token has most likely expired - sign in again in a browser and refresh VINTED_ACCOUNTS.`
+          account
+            ? `Vinted rejected the credentials for account "${account.id}" (${res.status}). The session has most likely expired - log in again in the panel (Accounts tab).`
             : `Vinted refused an anonymous read (${res.status}).`,
           res.status,
           path,
@@ -189,9 +203,10 @@ export class VintedClient {
     method: "POST" | "PUT" | "DELETE",
     path: string,
     opts: SendOptions,
+    alreadyRecovered = false,
   ): Promise<T> {
-    const { account } = opts;
-    const domain = opts.domain ?? account.domain ?? this.cfg.defaultDomain;
+    const account = await freshAccount(opts.account);
+    const domain = hostFor(opts.domain ?? account.domain ?? this.cfg.defaultDomain, path);
     const url = new URL(`https://${domain}${path}`);
     for (const [key, value] of Object.entries(opts.query ?? {})) {
       if (value !== undefined && value !== null && value !== "") {
@@ -213,7 +228,12 @@ export class VintedClient {
       res = await fetch(url, {
         method,
         headers,
-        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+        // A FormData body sets its own multipart content-type.
+        ...(opts.form
+          ? { body: opts.form }
+          : opts.body !== undefined
+            ? { body: JSON.stringify(opts.body) }
+            : {}),
       });
     } catch (err) {
       throw new VintedError(
@@ -232,9 +252,15 @@ export class VintedClient {
         Number.isFinite(retryAfter) ? retryAfter : null,
       );
     }
+    if (res.status === 401 && !alreadyRecovered) {
+      // A 401 means the request was rejected before doing anything, so after
+      // renewing the session it is safe to send it once more.
+      const next = await recoverAccount(account);
+      if (next) return this.send<T>(method, path, { ...opts, account: next }, true);
+    }
     if (res.status === 401 || res.status === 403) {
       throw new RefusalError(
-        `Vinted refused the action for account "${account.id}" (${res.status}). The token may have expired, or the action needs a CSRF token or a captcha.`,
+        `Vinted refused the action for account "${account.id}" (${res.status}). The session may have expired (log in again in the panel), or the action needs a CSRF token or a captcha.`,
         res.status,
         path,
       );
@@ -263,8 +289,20 @@ export class VintedClient {
 export interface SendOptions {
   account: VintedAccount;
   body?: unknown;
+  /** Multipart upload; takes precedence over `body`. */
+  form?: FormData;
   query?: RequestOptions["query"];
   domain?: string;
+}
+
+/** Refuses any host that is not a Vinted marketplace, before a cookie is attached. */
+function hostFor(domain: string, path: string): string {
+  try {
+    return assertVintedHost(domain);
+  } catch (err) {
+    if (err instanceof HostError) throw new VintedError(err.message, null, path);
+    throw err;
+  }
 }
 
 function backoffMs(attempt: number): number {

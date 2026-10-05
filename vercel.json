@@ -7,7 +7,14 @@
     }
   ],
   "functions": {
-    "api/mcp.ts": { "maxDuration": 60 },
-    "api/cron/monitor.ts": { "maxDuration": 300 }
+    "api/mcp.ts": {
+      "maxDuration": 60
+    },
+    "api/cron/monitor.ts": {
+      "maxDuration": 300
+    },
+    "api/app/**/*.ts": {
+      "maxDuration": 60
+    }
   }
 }

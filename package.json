@@ -4,16 +4,20 @@
   "private": true,
   "type": "module",
   "description": "Remote MCP server for Vinted sellers: comps research, price estimation, listing preparation and seller monitoring. Runs on Vercel.",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "demo": "vite-node scripts/dev-server.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "typescript": "^5.9.0",
+    "vite-node": "^2.1.9",
     "vitest": "^2.1.0"
   }
 }

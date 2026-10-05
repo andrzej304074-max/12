@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Vinted Seller</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="login" class="center" hidden>
+    <form class="card" id="login-form" autocomplete="off">
+      <h1>Vinted Seller</h1>
+      <p class="muted small" id="login-note">Zaloguj się hasłem do panelu.</p>
+      <div class="field">
+        <label for="login-pass">Hasło do panelu</label>
+        <input id="login-pass" type="password" autocomplete="current-password" required>
+      </div>
+      <div id="login-error" class="notice bad" hidden></div>
+      <button class="primary" type="submit" style="width:100%">Zaloguj</button>
+    </form>
+  </div>
+
+  <div id="app" class="shell" hidden>
+    <aside class="side">
+      <div class="brand">Vinted Seller</div>
+      <nav class="nav" id="nav"></nav>
+      <div class="spacer"></div>
+      <button id="theme" class="link small" type="button">Motyw: auto</button>
+      <button id="logout" class="link small" type="button">Wyloguj</button>
+    </aside>
+    <main class="main">
+      <div class="topbar">
+        <h1 id="title"></h1>
+        <div id="account-switch"></div>
+      </div>
+      <div id="view"></div>
+    </main>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+  <dialog id="dialog"></dialog>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

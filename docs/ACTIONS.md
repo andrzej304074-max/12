@@ -11,6 +11,9 @@ jakie ma zabezpieczenia i co sprawdzic, zanim wlaczysz automat.
 | `make_offer` | Wysyla oferte cenowa; bez `price` = cena wywolawcza minus rabat (domyslnie 20%) |
 | `process_find` | Dla znaleziska z `list_new_finds`: polubienie + oferta, potem oznacza jako zalatwione |
 | `send_message` | Wiadomosc w rozmowie o przedmiocie |
+| `reply_conversation` | Odpowiedz w istniejacej rozmowie |
+| `respond_to_offer` | Akceptacja / odrzucenie oferty kupujacego |
+| `update_listing` | Zmiana tytulu, opisu lub ceny wlasnej oferty |
 | `publish_listing` | Publikuje oferte (najpierw te same kontrole co `validate_listing`) |
 | `delete_listing` | Usuwa Twoja oferte. Nieodwracalne |
 
@@ -18,7 +21,14 @@ jakie ma zabezpieczenia i co sprawdzic, zanim wlaczysz automat.
 niczego nie wysyla - zwraca podglad: co poszloby do Vinted i czy limity na to
 pozwalaja. Dopiero ponowne wywolanie z `confirm: true` wysyla.
 
-`publish_listing` nie wgrywa zdjec. Wgraj je w Vinted i podaj ich `photo_ids`.
+`publish_listing` potrzebuje `photo_ids` - wgrywasz zdjecia narzedziem
+`upload_photo` (w panelu dzieje sie to samo po wybraniu plikow; zdjecia sa
+zmniejszane w przegladarce). Wgranie zdjecia nie wymaga `confirm`, bo samo
+niczego nie publikuje.
+
+W panelu reczne klikniecia sa potwierdzeniem same w sobie: wiadomosc, ktora
+piszesz, i „Polub" wysylaja sie od razu, a publikacja, edycja, usuniecie,
+akceptacja oferty i usuniecie konta pokazuja najpierw podglad.
 
 ## Automatyka
 
@@ -26,7 +36,9 @@ Automatyczne polubienie i oferta na nowych przedmiotach obserwowanych
 sprzedawcow. Wymaga dwoch rzeczy naraz:
 
 1. `watch_seller` z `auto_like: true` i/lub `auto_offer: true` - per sprzedawca,
-2. `AUTO_ACTIONS_ENABLED=true` w zmiennych na Vercel - glowny wylacznik.
+2. Glowny wylacznik wlaczony - przelacznik na **Pulpicie** w panelu (albo
+   `set_auto_actions_enabled`). `AUTO_ACTIONS_ENABLED` w zmiennych na Vercel to
+   tylko wartosc domyslna; przelacznik z panelu ma pierwszenstwo.
 
 Co sie dzieje przy kazdym przebiegu crona:
 
@@ -84,7 +96,7 @@ dalo sie ich sprawdzic na zywo przy pisaniu. Kolejnosc:
    przedmiot i zloz oferte recznie. Porownaj metode, sciezke i body z
    `endpoints.ts` i `src/vinted/actions.ts`; popraw, jesli sie roznia.
 3. Jedna reczna `make_offer` z `confirm: true` na testowym przedmiocie.
-4. Dopiero wtedy `AUTO_ACTIONS_ENABLED=true`.
+4. Dopiero wtedy wlacz automat na Pulpicie.
 
 ## Czego tu nie ma
 

@@ -56,6 +56,33 @@ export const endpoints = {
 
   /** Submit a price offer. POST { item_id, price, currency }. UNVERIFIED */
   offers: () => `/api/v2/offers`,
+
+  /** Password login and token refresh. POST JSON. UNVERIFIED */
+  oauthToken: () => `/oauth/token`,
+
+  /** The signed-in user's own profile (id, login, avatar). GET. UNVERIFIED */
+  currentUser: () => `/api/v2/users/current`,
+
+  /** Conversation list. GET ?page&per_page. UNVERIFIED */
+  inbox: () => `/api/v2/inbox`,
+
+  /** One conversation with its messages. GET. UNVERIFIED */
+  conversation: (conversationId: string | number) =>
+    `/api/v2/conversations/${conversationId}`,
+
+  /** Accept or reject an offer inside a conversation. POST. UNVERIFIED */
+  respondOffer: (
+    conversationId: string | number,
+    offerId: string | number,
+    accept: boolean,
+  ) =>
+    `/api/v2/conversations/${conversationId}/offers/${offerId}/${accept ? "accept" : "reject"}`,
+
+  /** Upload a photo, multipart. POST. UNVERIFIED */
+  photos: () => `/api/v2/photos`,
+
+  /** Edit own listing. PUT { item: {...} }. UNVERIFIED */
+  updateItem: (itemId: string | number) => `/api/v2/items/${itemId}`,
 } as const;
 
 /** Endpoints `diagnose_connection` probes, with a friendly label. */

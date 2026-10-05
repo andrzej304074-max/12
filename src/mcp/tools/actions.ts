@@ -20,6 +20,7 @@ import {
   setLimits,
   type ActionKind,
 } from "../../monitor/safety.js";
+import { getSettings } from "../../settings.js";
 import { resolveAccount } from "../../vinted/accounts.js";
 import {
   deleteListing,
@@ -49,25 +50,25 @@ import {
  * sends. All are annotated destructive so clients ask before running them.
  */
 
-const DESTRUCTIVE = {
+export const DESTRUCTIVE = {
   readOnlyHint: false,
   destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
 } as const;
 
-const accountProp = {
+export const accountProp = {
   type: "string",
-  description: "Which configured account acts. Optional when only one is configured.",
+  description: "Which connected account acts. Optional when only one is connected.",
 } as const;
 
-const confirmProp = {
+export const confirmProp = {
   type: "boolean",
   description:
     "Must be true to actually send. Without it the tool returns a preview and sends nothing.",
 } as const;
 
-async function preview(
+export async function preview(
   account: VintedAccount,
   kind: ActionKind,
   wouldSend: Record<string, unknown>,
@@ -102,7 +103,7 @@ const likeItemTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     if (optBoolean(args, "confirm") !== true) {
       return preview(account, "like", { itemId });
@@ -131,7 +132,7 @@ const makeOfferTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     let price = optNumber(args, "price");
     let currency: string | null = null;
@@ -178,7 +179,7 @@ const processFindTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     const find = await getFind(account.id, itemId);
     if (!find) throw new ArgumentError(`No find recorded for item ${itemId}.`);
@@ -248,7 +249,7 @@ const sendMessageTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     const text = requireString(args, "text");
     if (text.length > 2000) throw new ArgumentError("Message is longer than 2000 characters.");
@@ -290,7 +291,7 @@ const publishListingTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const photoIds = optNumberArray(args, "photo_ids") ?? [];
     const draft = {
       title: requireString(args, "title"),
@@ -348,7 +349,7 @@ const deleteListingTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     if (optBoolean(args, "confirm") !== true) {
       return preview(account, "delete", { itemId });
@@ -388,7 +389,7 @@ const setLimitsTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     if (optBoolean(args, "reset")) {
       return jsonResult({ account: account.id, limits: await resetLimits(account.id), reset: true });
     }
@@ -433,7 +434,7 @@ const statusTool: Tool = {
   },
   async handler(args) {
     const cfg = getConfig();
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const limits = await getLimits(account.id);
     const overrides = await getOverrides(account.id);
     const hour = localHour();
@@ -443,7 +444,7 @@ const statusTool: Tool = {
     );
     return jsonResult({
       account: account.id,
-      autoActionsEnabled: cfg.autoActionsEnabled,
+      autoActionsEnabled: (await getSettings()).autoActionsEnabled,
       limits,
       limitSource: source,
       usage: await getUsage(account.id),
@@ -472,7 +473,7 @@ const resumeTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const was = await getAutopause(account.id);
     await resumeAutomation(account.id);
     return jsonResult({ account: account.id, resumed: true, previousPause: was });

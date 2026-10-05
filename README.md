@@ -1,57 +1,99 @@
 # vinted-seller-mcp
 
-Zdalny serwer MCP dla sprzedazy na Vinted, uruchamiany na Vercel.
+Panel www i zdalny serwer MCP do sprzedazy na Vinted, jedno wdrozenie na Vercel.
 
-Szuka porownywalnych ofert, wylicza sensowna cene, rozwiazuje kategorie i marki,
-przygotowuje i sprawdza tresc oferty, a takze obserwuje wybranych sprzedawcow i
-zglasza ich nowe przedmioty wraz z cena negocjacyjna.
+- **Panel** (`/`) - minimalistyczna strona: laczysz konta, czytasz i piszesz
+  wiadomosci, wystawiasz i edytujesz oferty, obserwujesz sprzedawcow, ustawiasz
+  limity automatu.
+- **MCP** (`/api/mcp`) - te same funkcje jako 42 narzedzia dla Claude Code i
+  innych klientow MCP.
 
-Umie tez dzialac na koncie: publikowac i usuwac oferty, polubiac, wysylac
-oferty cenowe i wiadomosci - zawsze po `confirm: true`. Opcjonalnie sam polubia
-i sklada oferte -20% na nowych przedmiotach wybranych sprzedawcow, w ramach
-limitow ustawianych w locie. Szczegoly: [docs/ACTIONS.md](docs/ACTIONS.md).
+Panel nie dubluje logiki: kazde jego dzialanie wywoluje to samo narzedzie MCP
+ta sama sciezka kodu. Konta, limity, obserwowani i szkice sa wspolne - co
+ustawisz w panelu, widzi MCP, i odwrotnie.
+
+Co robi: szuka porownywalnych ofert i wylicza cene, rozwiazuje kategorie i
+marki, przygotowuje i publikuje oferty (ze zdjeciami), obsluguje skrzynke
+wiadomosci, obserwuje wybranych sprzedawcow i zglasza ich nowe przedmioty z
+cena negocjacyjna, a opcjonalnie sam polubia i sklada oferte -20% - w ramach
+limitow ustawianych w locie.
+
+Czego **nie** robi: nie udaje czlowieka. Klient przedstawia sie uczciwie, nie
+rozwiazuje CAPTCHA i nie omija zabezpieczen Vinted; gdy Vinted zada weryfikacji,
+zatrzymuje sie i mowi o tym wprost. Szczegoly: [docs/ACCOUNTS.md](docs/ACCOUNTS.md)
+i [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ## Wymagania
 
 - Konto Vercel
-- Upstash Redis (darmowy tier wystarcza) - bez niego monitoring nie przetrwa
-  miedzy wywolaniami funkcji
-- Konto Vinted, na ktore logujesz sie **recznie** w przegladarce
+- Upstash Redis (darmowy tier wystarcza) - bez niego konta, obserwowani i limity
+  nie przetrwaja miedzy wywolaniami funkcji
+- Konto Vinted (login, haslo i telefon do kodu SMS)
 
 ## Deploy na Vercel
 
 ```bash
 npm i -g vercel
 vercel link          # podepnij katalog do projektu na Vercel
-vercel env add MCP_AUTH_TOKEN production
-vercel env add VINTED_ACCOUNTS production
-vercel env add CRON_SECRET production
+vercel env add ADMIN_PASSWORD production      # haslo do panelu
+vercel env add ENCRYPTION_KEY production      # openssl rand -hex 32
+vercel env add MCP_AUTH_TOKEN production      # openssl rand -hex 32
+vercel env add CRON_SECRET production         # dowolny dlugi sekret
 vercel --prod
 ```
 
 Upstash dodaj przez **Vercel → Storage → Upstash Redis**; zmienne
-`UPSTASH_REDIS_REST_URL` i `UPSTASH_REDIS_REST_TOKEN` wstawia sam.
+`UPSTASH_REDIS_REST_URL` i `UPSTASH_REDIS_REST_TOKEN` wstawia sam. Zrob to
+**przed** podlaczeniem kont. Pelna lista zmiennych z opisami:
+[`.env.example`](.env.example).
 
-Pelna lista zmiennych z opisami: [`.env.example`](.env.example).
+> `ENCRYPTION_KEY` szyfruje zapisane tokeny kont. Zmiana klucza oznacza
+> ponowne podlaczenie wszystkich kont, wiec zachowaj jego kopie poza repozytorium.
 
-### Skad wziac `accessToken`
+## Pierwsze uruchomienie
 
-1. Zaloguj sie na Vinted w przegladarce (recznie - serwer nigdy nie prosi o haslo).
-2. DevTools → Application → Cookies → wartosc ciasteczka `access_token_web`.
-3. Wklej do `VINTED_ACCOUNTS`:
+1. Otworz adres projektu i zaloguj sie haslem z `ADMIN_PASSWORD`.
+2. **Pulpit** pokazuje, czego jeszcze brakuje w konfiguracji (Upstash, klucz,
+   tokeny). Uzupelnij, zrob redeploy.
+3. **Konta → Dodaj konto**: rynek, login, haslo, potem kod SMS od Vinted.
+   Szczegoly i ograniczenia: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+4. **Konta → Testuj** sprawdza sesje. Endpointy Vinted nie sa oficjalnym API i
+   nie dalo sie ich sprawdzic na zywo przy pisaniu - pierwsze uruchomienie
+   traktuj jak test.
+5. **Obserwowani** → dodaj sprzedawce (ID albo link do profilu).
+6. Dopiero na koncu, po sprawdzeniu endpointow zapisu
+   ([docs/ACTIONS.md](docs/ACTIONS.md)), wlacz automat na Pulpicie.
 
-```json
-[{ "id": "main", "label": "Moj sklep", "accessToken": "eyJ...", "userId": 12345678 }]
+## Panel
+
+| Zakladka | Co robisz |
+| --- | --- |
+| **Wiadomosci** | Skrzynka jak komunikator, wszystkie konta naraz: rozmowy, dymki, oferty z przyciskami Akceptuj/Odrzuc, szybkie odpowiedzi, odswiezanie co 30 s |
+| **Pulpit** | Stan konfiguracji, liczniki, glowny wylacznik automatu, reczny przebieg monitoringu |
+| **Konta** | Podlaczanie (login + haslo + kod SMS), test sesji, ponowne logowanie, usuwanie, dziennik prob |
+| **Obserwowani** | Sprzedawcy, rabat oferty, auto-polubienie, auto-oferta |
+| **Znaleziska** | Nowe przedmioty z cena oferty -X%: Polub, Oferta, Polub + oferta, Zalatwione |
+| **Research** | Podobne oferty, wycena (3 ceny + pewnosc), kategorie i marki |
+| **Wystaw** | Zdjecia (zmniejszane w przegladarce), tytul, opis, kategoria, marka, cena z podpowiedzia, walidacja na zywo, szkice, publikacja |
+| **Moje oferty** | Wyswietlenia, polubienia, edycja ceny/tytulu/opisu, usuwanie, duplikowanie jako szkic |
+| **Automatyka** | Limity (doba/godzina), okno godzin, pauza, rabat - zmieniane w locie; kolejka i log akcji |
+| **MCP** | Adres, polecenie podlaczenia klienta, lista narzedzi, reczne wywolanie narzedzia |
+
+Dzialania wysylajace cos do Vinted pokazuja najpierw dokladnie co pojdzie
+(publikacja, usuwanie, edycja, akceptacja oferty, usuniecie konta). Wiadomosc,
+ktora piszesz recznie, i klikniete „Polub” wysylaja sie od razu - klikniecie jest
+potwierdzeniem.
+
+Wersja demo bez konta Vinted (atrapa Vinted w pamieci):
+
+```bash
+npm install
+npm run demo        # http://localhost:3000, haslo do panelu: demo
 ```
-
-Token wygasa co jakis czas. Gdy narzedzia zaczna zwracac blad 401,
-`diagnose_connection` powie to wprost - wtedy podmien wartosc i zrob redeploy.
-
-Mozesz podpiac kilka kont naraz; narzedzia przyjmuja `account_id`.
 
 ## Podlaczenie klienta MCP
 
-Claude Code:
+Zakladka **MCP** w panelu podaje gotowe polecenie. Recznie:
 
 ```bash
 claude mcp add --transport http vinted \
@@ -59,13 +101,16 @@ claude mcp add --transport http vinted \
   --header "Authorization: Bearer TWOJ_MCP_AUTH_TOKEN"
 ```
 
-Sprawdzenie, czy serwer zyje (endpoint nie wymaga tokenu i nie zwraca sekretow):
+Sprawdzenie, czy serwer zyje (nie wymaga tokenu i nie zwraca sekretow):
 
 ```bash
 curl https://TWOJ-PROJEKT.vercel.app/api/health
 ```
 
-## Narzedzia
+Haslo do Vinted i kod SMS nigdy nie przechodza przez MCP ani przez rozmowe z
+modelem - konta podlaczasz wylacznie w panelu.
+
+## Narzedzia MCP
 
 ### Research
 
@@ -73,121 +118,135 @@ curl https://TWOJ-PROJEKT.vercel.app/api/health
 | --- | --- |
 | `search_similar_items` | Porownywalne oferty z katalogu |
 | `estimate_price` | Rozklad cen, trzy punkty cenowe, poziom pewnosci |
-| `find_category` | Nazwa kategorii → `catalog_id` wraz z pelna sciezka |
-| `find_brand` | Nazwa marki → `brand_id` |
-| `get_item` | Pojedyncza oferta |
-| `get_seller` | Profil sprzedawcy: liczba ofert, obserwujacy, reputacja |
+| `find_category` / `find_brand` | Nazwa → `catalog_id` / `brand_id` |
+| `get_item`, `get_seller` | Pojedyncza oferta, profil sprzedawcy |
 
-### Przygotowanie oferty
+### Wiadomosci
 
 | Narzedzie | Do czego |
 | --- | --- |
-| `draft_listing` | Sklada wersje robocza i raportuje braki |
-| `validate_listing` | Sprawdza limity pol i wymagane dane - **nigdy nie publikuje** |
+| `list_conversations` | Rozmowy jednego konta albo wszystkich (`all_accounts`) |
+| `get_conversation` | Cala rozmowa z wiadomosciami i ofertami |
+| `reply_conversation` | Odpowiedz (`confirm: true`) |
+| `respond_to_offer` | Akceptacja / odrzucenie oferty kupujacego (`confirm: true`) |
+| `get_reply_templates`, `set_reply_templates` | Szybkie odpowiedzi |
 
-Obie dzialaja lokalnie i nie wysylaja niczego do Vinted.
-
-### Monitoring sprzedawcow
+### Wystawianie i oferty
 
 | Narzedzie | Do czego |
 | --- | --- |
-| `watch_seller` | Dodaje sprzedawce do obserwowanych |
-| `unwatch_seller` | Usuwa z obserwowanych |
-| `list_watches` | Kogo obserwujesz i z jakim rabatem |
-| `list_new_finds` | Nowe przedmioty + policzona cena negocjacyjna |
-| `mark_find_handled` | Oznacza znalezisko jako zalatwione |
-| `run_monitor_pass` | Odpala przebieg od razu, bez czekania na crona |
+| `draft_listing`, `validate_listing` | Sklada szkic i sprawdza go lokalnie - **nigdy nie publikuje** |
+| `upload_photo` | Wgrywa zdjecie, zwraca `photo_id` |
+| `publish_listing` | Publikacja (`confirm: true`, odrzuca szkic z blokerami) |
+| `list_my_listings` | Wlasne oferty z wyswietleniami i polubieniami |
+| `update_listing` | Zmiana tytulu/opisu/ceny (`confirm: true`) |
+| `delete_listing` | Usuniecie oferty (`confirm: true`) |
+| `save_draft`, `list_drafts`, `delete_draft` | Szkice zapisywane na koncie |
+
+### Obserwowani i znaleziska
+
+| Narzedzie | Do czego |
+| --- | --- |
+| `watch_seller`, `update_watch`, `unwatch_seller`, `list_watches` | Lista obserwowanych; `update_watch` zmienia flagi bez resetu „widzianych" |
+| `list_new_finds`, `mark_find_handled` | Kolejka nowych przedmiotow z cena oferty |
+| `like_item`, `make_offer`, `process_find`, `send_message` | Akcje na koncie (`confirm: true`) |
+| `run_monitor_pass` | Przebieg od razu, bez czekania na crona |
 | `preview_offer_price` | Sama arytmetyka rabatu |
 
-### Akcje na koncie (wymagaja `confirm: true`)
+### Konta, automat, diagnostyka
 
 | Narzedzie | Do czego |
 | --- | --- |
-| `like_item` | Polubienie przedmiotu |
-| `make_offer` | Oferta cenowa (domyslnie cena wywolawcza -20%) |
-| `process_find` | Polubienie + oferta dla znaleziska, potem oznacza je jako zalatwione |
-| `send_message` | Wiadomosc do sprzedawcy |
-| `publish_listing` | Publikacja oferty (zdjecia wgrane wczesniej, podajesz `photo_ids`) |
-| `delete_listing` | Usuniecie wlasnej oferty |
-
-Bez `confirm: true` kazde z nich zwraca tylko podglad i niczego nie wysyla.
-
-### Automatyka i limity
-
-| Narzedzie | Do czego |
-| --- | --- |
-| `set_automation_limits` | Limity na dobe/godzine, okno godzin, pauza, rabat - w locie, per konto |
-| `get_automation_status` | Limity i ich zrodlo, zuzycie, kolejka, pauza, ostatnie akcje |
-| `resume_automation` | Zdejmuje pauze bezpiecznika |
-
-### Diagnostyka
-
-| Narzedzie | Do czego |
-| --- | --- |
-| `list_accounts` | Podpiete konta (bez tokenow) |
+| `list_accounts`, `test_account`, `remove_account` | Konta (bez tokenow), test sesji, usuniecie (`confirm: true`) |
+| `set_auto_actions_enabled` | Glowny wylacznik automatu |
+| `set_automation_limits`, `get_automation_status`, `resume_automation` | Limity w locie, stan, zdjecie pauzy bezpiecznika |
 | `diagnose_connection` | Sprawdza kazdy endpoint po kolei i mowi, ktory padl |
+
+Kazde narzedzie zmieniajace cos na Vinted wywolane bez `confirm: true` zwraca
+tylko podglad i niczego nie wysyla.
 
 ## Jak dziala monitoring
 
 1. `watch_seller` zapisuje sprzedawce i **zaznacza jego obecne oferty jako juz
    widziane** - dzieki temu nie dostajesz na start calego archiwum.
 2. Cron (`vercel.json`, domyslnie co 10 minut) odpytuje kazdego obserwowanego
-   sprzedawce o najnowsze oferty.
+   sprzedawce o najnowsze oferty, sprawdza nowe wiadomosci i odswieza sesje.
 3. Nowe pozycje trafiaja do kolejki znalezisk razem z `suggestedOfferPrice`
-   (domyslnie -20%, zmienisz przez `OFFER_DISCOUNT_PCT` globalnie albo
-   `discount_pct` przy pojedynczym sprzedawcy).
-4. `list_new_finds` pokazuje kolejke. Otwierasz link, decydujesz, a potem
-   `mark_find_handled` zeby zniknelo z listy.
-
-5. Jesli sprzedawca ma `auto_like` / `auto_offer` **i** `AUTO_ACTIONS_ENABLED=true`,
-   cron sam polubia i sklada oferte - tylko w oknie godzin, w ramach limitu
+   (domyslnie -20%; zmienisz w zakladce Automatyka albo przy sprzedawcy).
+4. Nowe znaleziska i nieprzeczytane wiadomosci moga isc na webhook
+   (`NOTIFY_WEBHOOK_URL`, np. Discord) - reagujesz z telefonu.
+5. Jesli sprzedawca ma auto-polubienie / auto-oferte **i** automat jest wlaczony
+   na Pulpicie, cron sam to robi - tylko w oknie godzin, w ramach limitu
    godzinowego i dziennego, i nie w czasie pauzy bezpiecznika. Nadmiar czeka w
    kolejce. Domyslnie automat jest wylaczony.
 
-> **Uwaga o planie Vercel:** darmowy plan Hobby pozwala na crona raz na dobe.
-> Harmonogram `*/10 * * * *` wymaga planu Pro. Na Hobby zmien `schedule` w
-> `vercel.json` na np. `0 9 * * *` albo wolaj `run_monitor_pass` recznie.
+> **Uwaga o planie Vercel:** darmowy plan Hobby pozwala na crona raz na dobe i
+> do 12 funkcji. Harmonogram `*/10 * * * *` wymaga planu Pro. Na Hobby zmien
+> `schedule` w `vercel.json` na np. `0 9 * * *` albo uzywaj przycisku „Uruchom
+> przebieg teraz". Panel jest jedna funkcja, wiec miesci sie w limicie.
+
+## Bezpieczenstwo
+
+- Panel: jedno haslo, podpisane ciasteczko sesji (HttpOnly, SameSite=Strict,
+  Secure na produkcji, 7 dni), sprawdzanie `Origin` przy kazdej zmianie, blokada
+  po 5 blednych hasel / 15 min. Blokada dziala miedzy wywolaniami tylko z
+  Upstash.
+- Hasla Vinted nie sa zapisywane ani logowane; tokeny sa szyfrowane
+  (AES-256-GCM). Logi redaguja klucze typu `password`, `token`, `cookie`.
+- Serwer wysyla zapytania z danymi konta **wylacznie** do hostow Vinted - zadne
+  narzedzie nie moze skierowac ich gdzie indziej, nawet gdy tekst wiadomosci od
+  obcego probuje do tego namowic model.
+- Instrukcje MCP mowia modelowi, ze tresc wiadomosci i opisow to dane, a nie
+  polecenia.
 
 ## Ograniczenia, o ktorych warto wiedziec
 
-- **Endpointy Vinted nie sa oficjalnym API.** Sciezki potrafia sie zmienic bez
-  zapowiedzi. Wszystkie siedza w `src/vinted/endpoints.ts`, a
-  `diagnose_connection` wskaze, ktora przestala odpowiadac.
-- **Nie udalo sie ich sprawdzic na zywo** przy pisaniu (srodowisko budujace nie
-  mialo dostepu do vinted.pl), wiec pierwsze uruchomienie zacznij od
-  `diagnose_connection`.
-- **Endpointy zapisu (polubienie, oferta, publikacja...) sa niezweryfikowane.**
-  Zanim wlaczysz automat, sprawdz je w DevTools i zrob jedna reczna oferte -
-  procedura w [docs/ACTIONS.md](docs/ACTIONS.md).
-- **Ceny to ceny wywolawcze, nie transakcyjne.** Vinted nie udostepnia publicznie
-  cen sprzedazy, wiec `estimate_price` opisuje, czego chca sprzedajacy - i mowi
-  to wprost w polu `notes`.
-- **Bez Upstash monitoring nie dziala** miedzy wywolaniami. Serwer mowi o tym w
-  odpowiedzi `watch_seller` i `list_watches` (pole `durableStorage`).
+- **Endpointy Vinted nie sa oficjalnym API** i zadnego z nich - odczytu, zapisu,
+  logowania, skrzynki ani wgrywania zdjec - nie dalo sie sprawdzic na zywo przy
+  pisaniu (srodowisko budujace nie mialo dostepu do vinted.pl). Sciezki sa w
+  `src/vinted/endpoints.ts`, pola logowania w `src/vinted/login.ts`.
+  Procedura weryfikacji: [docs/ACCOUNTS.md](docs/ACCOUNTS.md) i
+  [docs/ACTIONS.md](docs/ACTIONS.md).
+- **Logowanie z serwera moze byc blokowane.** Vinted chroni logowanie przed
+  botami, a Vercel to ruch z serwerowni. Jesli zazada CAPTCHA, panel powie to
+  wprost i niczego nie bedzie obchodzil - konta wtedy nie podlaczysz, dopoki
+  Vinted nie przepusci.
+- **Ceny to ceny wywolawcze, nie transakcyjne.** `estimate_price` mowi to wprost.
+- **Bez Upstash nic nie jest trwale** - Pulpit i widok Kont ostrzegaja.
+- Automatyzacja akcji na koncie moze byc sprzeczna z regulaminem Vinted
+  niezaleznie od tempa - sprawdz go dla swojego rynku.
 
 ## Rozwoj lokalny
 
 ```bash
 npm install
 npm run typecheck
-npm test
+npm test            # 286 testow, nie dotykaja sieci
+npm run demo        # panel z atrapa Vinted
 ```
 
-Testy (135) pokrywaja statystyke wyceny, arytmetyke rabatu, parsowanie
-konfiguracji, uwierzytelnianie, redakcje sekretow w logach, warstwe protokolu
-MCP, silnik monitoringu, akcje zapisu (bramka `confirm`, limity, bezpiecznik,
-brak ponawiania), automatyke w cronie i sam endpoint HTTP. Nie dotykaja sieci.
+Testy pokrywaja m.in. szyfrowanie, konta, logowanie (kod SMS, blokada, limit
+prob, odswiezanie sesji), sesje i ochrone panelu, bramke `confirm`, limity i
+bezpiecznik, automat w cronie, skrzynke, wgrywanie zdjec, szkice oraz
+ograniczenie hostow.
 
 ## Struktura
 
 ```
+public/               # panel (HTML + vanilla JS, bez frameworka i bez builda)
+  views/              # jeden plik na zakladke
 api/
   mcp.ts              # endpoint MCP (Streamable HTTP, bezstanowy)
+  app/[...path].ts    # backend panelu (jedna funkcja na wszystkie /api/app/*)
   cron/monitor.ts     # zaplanowany przebieg monitoringu
   health.ts           # liveness
 src/
+  app/router.ts       # trasy panelu: logowanie, sesja, /tool, konta
   mcp/                # protokol JSON-RPC, dyspozytor, definicje narzedzi
-  vinted/             # klient HTTP, endpointy, wyszukiwanie, statystyka cen
-  monitor/engine.ts   # wykrywanie nowych ofert
+  vinted/             # klient HTTP, endpointy, logowanie, konta, skrzynka
+  monitor/            # wykrywanie nowych ofert, limity, bezpiecznik, powiadomienia
   store/              # Upstash Redis albo pamiec procesu
+  crypto.ts session.ts settings.ts
+scripts/dev-server.ts # demo z atrapa Vinted (nie jest wdrazane)
+docs/                 # ACCOUNTS.md, ACTIONS.md
 ```

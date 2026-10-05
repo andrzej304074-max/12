@@ -25,7 +25,15 @@ export interface Limits {
 
 export type LimitOverrides = Partial<Limits>;
 
-export type ActionKind = "like" | "offer" | "message" | "publish" | "delete";
+export type ActionKind =
+  | "like"
+  | "offer"
+  | "message"
+  | "publish"
+  | "delete"
+  | "update"
+  | "respond"
+  | "upload";
 
 export class LimitError extends Error {
   constructor(message: string) {

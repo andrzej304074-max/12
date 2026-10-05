@@ -24,6 +24,17 @@ export interface VintedAccount {
   domain?: string;
   /** Numeric Vinted user id of this account, when known. */
   userId?: number;
+  /** Where the account came from: VINTED_ACCOUNTS ("env") or the panel. */
+  source?: "env" | "panel";
+  /** Vinted login name, filled in when the account is connected. */
+  login?: string;
+  avatarUrl?: string;
+  /** "needs_login" when the session expired and the panel must log in again. */
+  status?: "connected" | "needs_login";
+  /** Panel accounts only: lets the server renew the session by itself. */
+  refreshToken?: string;
+  /** Epoch ms at which accessToken stops working, when Vinted told us. */
+  expiresAt?: number;
 }
 
 export interface Config {
@@ -31,6 +42,12 @@ export interface Config {
   mcpAuthToken: string | null;
   /** Secret Vercel Cron presents on /api/cron/monitor. */
   cronSecret: string | null;
+  /** Password of the web panel. Without it the panel is disabled. */
+  adminPassword: string | null;
+  /** Signs panel session cookies. Falls back to a key derived from the password. */
+  sessionSecret: string | null;
+  /** 32-byte key (hex or base64) encrypting stored Vinted credentials. */
+  encryptionKey: string | null;
   /** Default marketplace host, e.g. "www.vinted.pl". */
   defaultDomain: string;
   accounts: VintedAccount[];
@@ -110,6 +127,8 @@ export function parseAccounts(raw: string | null): VintedAccount[] {
       id,
       label: typeof rec.label === "string" && rec.label ? rec.label : id,
       accessToken,
+      source: "env",
+      status: "connected",
     };
     if (typeof rec.sessionCookie === "string" && rec.sessionCookie) {
       account.sessionCookie = rec.sessionCookie;
@@ -148,6 +167,9 @@ export function getConfig(): Config {
   cached = {
     mcpAuthToken: str("MCP_AUTH_TOKEN"),
     cronSecret: str("CRON_SECRET"),
+    adminPassword: str("ADMIN_PASSWORD"),
+    sessionSecret: str("SESSION_SECRET"),
+    encryptionKey: str("ENCRYPTION_KEY"),
     defaultDomain: str("VINTED_DOMAIN") ?? "www.vinted.pl",
     accounts: parseAccounts(str("VINTED_ACCOUNTS")),
     upstash:

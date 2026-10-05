@@ -1,8 +1,10 @@
 import { actionTools } from "./actions.js";
+import { inboxTools } from "./inbox.js";
 import { listingTools } from "./listing.js";
 import { monitorTools } from "./monitor.js";
 import { opsTools } from "./ops.js";
 import { researchTools } from "./research.js";
+import { sellingTools } from "./selling.js";
 import type { Tool } from "./types.js";
 
 export const allTools: Tool[] = [
@@ -10,6 +12,8 @@ export const allTools: Tool[] = [
   ...listingTools,
   ...monitorTools,
   ...actionTools,
+  ...inboxTools,
+  ...sellingTools,
   ...opsTools,
 ];
 

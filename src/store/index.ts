@@ -59,6 +59,19 @@ export const keys = {
   autopause: (accountId: string) => `autopause:${accountId}`,
   actionLog: (accountId: string) => `actionlog:${accountId}`,
   lastRun: () => `monitor:lastRun`,
+  settings: () => `settings:global`,
+  accountIds: () => `accounts`,
+  account: (id: string) => `account:${id}`,
+  loginState: (loginId: string) => `loginstate:${loginId}`,
+  loginAttempts: (hash: string) => `loginattempts:${hash}`,
+  loginVerifyAttempts: (loginId: string) => `loginverify:${loginId}`,
+  loginLog: () => `loginlog`,
+  panelFails: (ip: string) => `panelfail:${ip}`,
+  drafts: (accountId: string) => `drafts:${accountId}`,
+  draft: (accountId: string, id: string) => `draft:${accountId}:${id}`,
+  templates: () => `templates`,
+  inboxSeen: (accountId: string) => `inboxseen:${accountId}`,
+  inboxSeeded: (accountId: string) => `inboxseeded:${accountId}`,
 };
 
 /** UTC day stamp used to scope the per-day action counters. */

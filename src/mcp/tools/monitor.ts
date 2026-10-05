@@ -11,11 +11,19 @@ import {
   seedWatch,
   type Watch,
 } from "../../monitor/engine.js";
+import { getSettings } from "../../settings.js";
 import { getStore, keys } from "../../store/index.js";
 import { resolveAccount } from "../../vinted/accounts.js";
 import { getSeller, getSellerItems } from "../../vinted/search.js";
 import { jsonResult } from "../protocol.js";
-import { optBoolean, optNumber, optString, requireString, type Tool } from "./types.js";
+import {
+  ArgumentError,
+  optBoolean,
+  optNumber,
+  optString,
+  requireString,
+  type Tool,
+} from "./types.js";
 
 /**
  * Seller monitoring.
@@ -53,19 +61,19 @@ const watchSeller: Tool = {
       auto_like: {
         type: "boolean",
         description:
-          "Like this seller's new items automatically. Takes effect only when AUTO_ACTIONS_ENABLED=true; subject to limits and the activity window.",
+          "Like this seller's new items automatically. Takes effect only while automatic actions are switched on (panel Dashboard, set_auto_actions_enabled or AUTO_ACTIONS_ENABLED); subject to limits and the activity window.",
       },
       auto_offer: {
         type: "boolean",
         description:
-          "Send the discounted offer on this seller's new items automatically. Takes effect only when AUTO_ACTIONS_ENABLED=true; subject to limits and the activity window.",
+          "Send the discounted offer on this seller's new items automatically. Takes effect only while automatic actions are switched on (panel Dashboard, set_auto_actions_enabled or AUTO_ACTIONS_ENABLED); subject to limits and the activity window.",
       },
     },
     required: ["seller_id"],
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const sellerId = requireString(args, "seller_id");
     const domain = optString(args, "domain") ?? null;
     const store = getStore();
@@ -95,14 +103,56 @@ const watchSeller: Tool = {
       seededItems: seeded,
       durableStorage: store.durable,
       automation: wantsAuto
-        ? getConfig().autoActionsEnabled
+        ? (await getSettings()).autoActionsEnabled
           ? "Automatic actions are on for this seller, within the account's limits and activity window."
-          : "Automatic actions are requested but AUTO_ACTIONS_ENABLED is not true, so nothing will be sent automatically yet."
+          : "Automatic actions are requested but the master switch is off, so nothing will be sent automatically yet (turn it on in the panel Dashboard or with set_auto_actions_enabled)."
         : "Detection only.",
       note: store.durable
         ? "Watch saved. New listings will be picked up on the next monitor pass."
         : "Warning: no Upstash credentials are configured, so this watch lives in memory only and will not survive the next invocation. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
     });
+  },
+};
+
+const updateWatch: Tool = {
+  name: "update_watch",
+  title: "Change a watched seller's settings",
+  description:
+    "Changes auto_like, auto_offer or the discount of a seller already on the watchlist. Unlike watch_seller it does not reset which items count as seen.",
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  inputSchema: {
+    type: "object",
+    properties: {
+      ...accountProp,
+      seller_id: { type: "string" },
+      auto_like: { type: "boolean" },
+      auto_offer: { type: "boolean" },
+      discount_pct: {
+        type: ["number", "null"],
+        description: "Discount for this seller; null returns to the account default.",
+      },
+    },
+    required: ["seller_id"],
+    additionalProperties: false,
+  },
+  async handler(args) {
+    const account = await resolveAccount(optString(args, "account_id"));
+    const sellerId = requireString(args, "seller_id");
+    const watch = (await listWatches(account.id)).find((w) => w.sellerId === sellerId);
+    if (!watch) throw new ArgumentError(`Seller ${sellerId} is not on the watchlist.`);
+    const next: Watch = { ...watch };
+    const autoLike = optBoolean(args, "auto_like");
+    const autoOffer = optBoolean(args, "auto_offer");
+    if (autoLike !== undefined) next.autoLike = autoLike;
+    if (autoOffer !== undefined) next.autoOffer = autoOffer;
+    if (args.discount_pct === null) next.discountPct = null;
+    else if (optNumber(args, "discount_pct") !== undefined) {
+      const pct = optNumber(args, "discount_pct")!;
+      if (pct < 0 || pct > 90) throw new ArgumentError('"discount_pct" must be between 0 and 90.');
+      next.discountPct = pct;
+    }
+    await addWatch(account.id, next);
+    return jsonResult({ account: account.id, watching: next });
   },
 };
 
@@ -118,7 +168,7 @@ const unwatchSeller: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const sellerId = requireString(args, "seller_id");
     await removeWatch(account.id, sellerId);
     return jsonResult({ unwatched: sellerId, account: account.id });
@@ -136,7 +186,7 @@ const listWatchesTool: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const watches = await listWatches(account.id);
     const store = getStore();
     return jsonResult({
@@ -168,7 +218,7 @@ const listNewFinds: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const finds = await listFinds(account.id, {
       includeHandled: optBoolean(args, "include_handled") ?? false,
       limit: optNumber(args, "limit") ?? 50,
@@ -199,7 +249,7 @@ const markHandled: Tool = {
     additionalProperties: false,
   },
   async handler(args) {
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     const itemId = requireString(args, "item_id");
     const updated = await markFindHandled(
       account.id,
@@ -233,7 +283,7 @@ const runMonitor: Tool = {
     if (optBoolean(args, "all_accounts")) {
       return jsonResult({ results: await runPass() });
     }
-    const account = resolveAccount(optString(args, "account_id"));
+    const account = await resolveAccount(optString(args, "account_id"));
     return jsonResult({ result: await runPassForAccount(account) });
   },
 };
@@ -269,6 +319,7 @@ const previewOffer: Tool = {
 
 export const monitorTools: Tool[] = [
   watchSeller,
+  updateWatch,
   unwatchSeller,
   listWatchesTool,
   listNewFinds,
