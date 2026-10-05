@@ -39,6 +39,11 @@ export function formatPrice(price: number): number {
 export interface ItemProblem {
   index: number;
   field: string;
+  /**
+   * A stable code the panel turns into its own wording. The ones Vinted also
+   * uses (TITLE_LENGTH, CATALOG_NOT_LEAF, BRAND_REQUIRED, ...) keep its names.
+   */
+  code: string;
   message: string;
   /** "error" blocks sending; "warning" is advice Vinted may overrule. */
   level: "error" | "warning";
@@ -51,6 +56,14 @@ export interface CheckedItem {
   /** Fields dropped because the category disables them. */
   removedFields: string[];
 }
+
+const problem = (index: number, field: string, code: string, message: string, level: ItemProblem["level"]): ItemProblem => ({
+  index,
+  field,
+  code,
+  message,
+  level,
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -75,18 +88,21 @@ function checkText(
   const value = item[field];
   if (value === undefined && !required) return;
   if (typeof value !== "string" || value.trim() === "") {
-    problems.push({ index, field, message: `"${field}" is required and must be text.`, level: "error" });
+    problems.push(problem(index, field, "TEXT_REQUIRED", `"${field}" is required and must be text.`, "error"));
     return;
   }
   const { min, max } = TEXT_LIMITS[field];
   const length = [...value.trim()].length;
   if (length < min || length > max) {
-    problems.push({
-      index,
-      field,
-      message: `"${field}" is ${length} characters; the documentation gives ${min}-${max}.`,
-      level: "warning",
-    });
+    problems.push(
+      problem(
+        index,
+        field,
+        field === "title" ? "TITLE_LENGTH" : "DESCRIPTION_LENGTH",
+        `"${field}" is ${length} characters; the documentation gives ${min}-${max}.`,
+        "warning",
+      ),
+    );
   }
 }
 
@@ -94,7 +110,7 @@ function checkPhotos(item: Record<string, unknown>, index: number, problems: Ite
   const value = item.photo_urls;
   if (value === undefined && !required) return;
   if (!Array.isArray(value) || value.length === 0 || !value.every((u) => typeof u === "string")) {
-    problems.push({ index, field: "photo_urls", message: `"photo_urls" must be a list of public photo addresses.`, level: "error" });
+    problems.push(problem(index, "photo_urls", "PHOTOS_REQUIRED", `"photo_urls" must be a list of public photo addresses.`, "error"));
     return;
   }
   for (const raw of value as string[]) {
@@ -105,9 +121,9 @@ function checkPhotos(item: Record<string, unknown>, index: number, problems: Ite
       /* reported below */
     }
     if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) {
-      problems.push({ index, field: "photo_urls", message: `"${raw.slice(0, 80)}" is not an http(s) address.`, level: "error" });
+      problems.push(problem(index, "photo_urls", "PHOTO_URL_INVALID", `"${raw.slice(0, 80)}" is not an http(s) address.`, "error"));
     } else if (url.protocol === "http:") {
-      problems.push({ index, field: "photo_urls", message: `"${raw.slice(0, 80)}" is not https; Vinted fetches the photos itself, so they must be public and permanent.`, level: "warning" });
+      problems.push(problem(index, "photo_urls", "PHOTO_NOT_HTTPS", `"${raw.slice(0, 80)}" is not https; Vinted fetches the photos itself, so they must be public and permanent.`, "warning"));
     }
   }
 }
@@ -128,7 +144,7 @@ export function checkNewItem(
 ): CheckedItem {
   const problems: ItemProblem[] = [];
   if (!isRecord(raw)) {
-    return { payload: null, removedFields: [], problems: [{ index, field: "(item)", message: "Each item must be an object.", level: "error" }] };
+    return { payload: null, removedFields: [], problems: [problem(index, "(item)", "ITEM_NOT_OBJECT", "Each item must be an object.", "error")] };
   }
   const item: Record<string, unknown> = { ...raw };
   // A category can switch fields off ("disabled_fields"); those are neither
@@ -141,33 +157,36 @@ export function checkNewItem(
 
   const price = numeric(item.price);
   if (price === null || price <= 0) {
-    problems.push({ index, field: "price", message: `"price" must be a number above 0.`, level: "error" });
+    problems.push(problem(index, "price", "PRICE_INVALID", `"price" must be a number above 0.`, "error"));
   }
   for (const field of ["catalog_id", "status_id", "package_size_id"] as const) {
     if (!isWholeNumber(item[field])) {
-      problems.push({ index, field, message: `"${field}" is required and must be an id from the ontology.`, level: "error" });
+      problems.push(problem(index, field, "ID_REQUIRED", `"${field}" is required and must be an id from the ontology.`, "error"));
     }
   }
   if (!disabled.has("brand") && (typeof item.brand !== "string" || item.brand.trim() === "")) {
-    problems.push({ index, field: "brand", message: `"brand" is required and is plain text (not an id).`, level: "error" });
+    problems.push(problem(index, "brand", "BRAND_REQUIRED", `"brand" is required and is plain text (not an id).`, "error"));
   }
   if (item.reference !== undefined && (typeof item.reference !== "string" || item.reference.trim() === "")) {
-    problems.push({ index, field: "reference", message: `"reference" must be text.`, level: "error" });
+    problems.push(problem(index, "reference", "TEXT_REQUIRED", `"reference" must be text.`, "error"));
   }
   if (item.is_draft !== undefined && typeof item.is_draft !== "boolean") {
-    problems.push({ index, field: "is_draft", message: `"is_draft" must be true or false.`, level: "error" });
+    problems.push(problem(index, "is_draft", "DRAFT_FLAG_INVALID", `"is_draft" must be true or false.`, "error"));
   }
 
   const removedFields: string[] = [];
   const category = opts.category;
   if (category) {
     if (!category.leaf) {
-      problems.push({
-        index,
-        field: "catalog_id",
-        message: `Category ${category.id} ("${category.path.join(" › ")}") is not a leaf; Vinted accepts only leaf categories.`,
-        level: "warning",
-      });
+      problems.push(
+        problem(
+          index,
+          "catalog_id",
+          "CATALOG_NOT_LEAF",
+          `Category ${category.id} ("${category.path.join(" › ")}") is not a leaf; Vinted accepts only leaf categories.`,
+          "warning",
+        ),
+      );
     }
     for (const field of category.disabledFields) {
       if (field in item) {
@@ -191,17 +210,17 @@ export function checkNewItem(
 export function checkItemUpdate(raw: unknown, index: number): CheckedItem {
   const problems: ItemProblem[] = [];
   if (!isRecord(raw)) {
-    return { payload: null, removedFields: [], problems: [{ index, field: "(item)", message: "Each item must be an object.", level: "error" }] };
+    return { payload: null, removedFields: [], problems: [problem(index, "(item)", "ITEM_NOT_OBJECT", "Each item must be an object.", "error")] };
   }
   const item: Record<string, unknown> = { ...raw };
   try {
     if (typeof item.id !== "string") throw new Error("missing");
     safeId(item.id, "id");
   } catch {
-    problems.push({ index, field: "id", message: `"id" is required: the Vinted id (UUID) of the item.`, level: "error" });
+    problems.push(problem(index, "id", "UPDATE_ID_REQUIRED", `"id" is required: the Vinted id (UUID) of the item.`, "error"));
   }
   if (Object.keys(item).filter((k) => k !== "id").length === 0) {
-    problems.push({ index, field: "(item)", message: "Nothing to change besides the id.", level: "error" });
+    problems.push(problem(index, "(item)", "UPDATE_NOTHING", "Nothing to change besides the id.", "error"));
   }
   checkText(item, "title", index, problems, false);
   checkText(item, "description", index, problems, false);
@@ -209,7 +228,7 @@ export function checkItemUpdate(raw: unknown, index: number): CheckedItem {
   if (item.price !== undefined) {
     const price = numeric(item.price);
     if (price === null || price <= 0) {
-      problems.push({ index, field: "price", message: `"price" must be a number above 0.`, level: "error" });
+      problems.push(problem(index, "price", "PRICE_INVALID", `"price" must be a number above 0.`, "error"));
     } else {
       item.price = formatPrice(price);
     }

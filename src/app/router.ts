@@ -20,9 +20,12 @@ import {
   registerFailure,
   verifySession,
 } from "../session.js";
-import { saveProAccount } from "../pro/accounts.js";
-import { ProInputError } from "../pro/errors.js";
+import { getProAccount, saveProAccount } from "../pro/accounts.js";
+import { ProError, ProInputError, type ProErrorKind } from "../pro/errors.js";
 import { isProEnv } from "../pro/hosts.js";
+import { compactOntology, loadOntology } from "../pro/ontology.js";
+import { getLabel } from "../pro/orders.js";
+import { PhotoUploadUnavailable, uploadPhoto } from "../pro/photos.js";
 import { getStore } from "../store/index.js";
 import { listAccountSummaries } from "../vinted/accounts.js";
 import {
@@ -59,6 +62,18 @@ const LOGIN_STATUS: Record<LoginFailure, number> = {
   unexpected: 502,
 };
 
+const PRO_STATUS: Record<ProErrorKind, number> = {
+  config: 400,
+  auth: 502,
+  forbidden: 502,
+  not_found: 404,
+  validation: 422,
+  rate_limited: 429,
+  server: 502,
+  network: 502,
+  unexpected: 502,
+};
+
 function clientIp(req: VercelLikeRequest): string {
   const forwarded = header(req, "x-forwarded-for");
   return forwarded?.split(",")[0]?.trim() || req.socket?.remoteAddress || "unknown";
@@ -87,9 +102,9 @@ function asObject(value: unknown): Record<string, unknown> {
  * quote the text it choked on, so the real message is never passed on: it
  * could put a password or a token into a response or a log line.
  */
-async function readSecretBody(req: VercelLikeRequest): Promise<Record<string, unknown>> {
+async function readSecretBody(req: VercelLikeRequest, maxBytes?: number): Promise<Record<string, unknown>> {
   try {
-    return asObject(await readJsonBody(req));
+    return asObject(await readJsonBody(req, maxBytes));
   } catch (err) {
     throw new ProInputError(/too large/i.test((err as Error).message) ? "The request is too large." : "The request body is not valid JSON.");
   }
@@ -105,6 +120,8 @@ function setupFlags() {
     notifyWebhook: cfg.notifyWebhookUrl !== null,
     // Vinted Pro webhooks are signed over the exact bytes; see src/pro/receiver.ts.
     rawBodyForWebhooks: process.env.NODEJS_HELPERS === "0",
+    // Photos for Vinted Pro listings can be uploaded when a Blob store is connected.
+    photoUpload: cfg.blobToken !== null,
   };
 }
 
@@ -281,8 +298,45 @@ export async function handleApp(
       return;
     }
 
+    if (route === "/pro-ontology" && method === "GET") {
+      const query = new URL(req.url ?? "/", "http://local").searchParams;
+      const account = await getProAccount(query.get("account") ?? undefined);
+      const loaded = await loadOntology(account, { refresh: query.get("refresh") === "1" });
+      sendJson(res, 200, { account: account.id, fetchedAt: loaded.fetchedAt, fromCache: loaded.fromCache, ...compactOntology(loaded.raw) });
+      return;
+    }
+
+    if (route === "/pro-label" && method === "GET") {
+      const query = new URL(req.url ?? "/", "http://local").searchParams;
+      const account = await getProAccount(query.get("account") ?? undefined);
+      const orderId = query.get("order") ?? "";
+      const label = await getLabel(account, orderId);
+      res.writeHead(200, {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="label_${orderId.replace(/[^A-Za-z0-9_-]/g, "")}.pdf"`,
+        "content-length": String(label.bytes.length),
+        "cache-control": "no-store",
+      });
+      res.end(Buffer.from(label.bytes));
+      return;
+    }
+
+    if (route === "/pro-upload" && method === "POST") {
+      const body = await readSecretBody(req, BODY_LIMIT + 500_000);
+      sendJson(res, 200, await uploadPhoto(typeof body.base64 === "string" ? body.base64 : ""));
+      return;
+    }
+
     sendJson(res, 404, { error: "not_found", message: `No route ${method} ${route}.` });
   } catch (err) {
+    if (err instanceof PhotoUploadUnavailable) {
+      sendJson(res, 503, { error: "blob_not_configured", message: err.message });
+      return;
+    }
+    if (err instanceof ProError) {
+      sendJson(res, PRO_STATUS[err.kind], { error: err.kind, message: err.message, ...(err.code ? { code: err.code } : {}) });
+      return;
+    }
     if (err instanceof ProInputError) {
       sendJson(res, 400, { error: "invalid_input", message: err.message });
       return;

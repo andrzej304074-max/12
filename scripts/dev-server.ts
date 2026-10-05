@@ -5,7 +5,9 @@ import healthHandler from "../api/health.js";
 import mcpHandler from "../api/mcp.js";
 import { handleApp } from "../src/app/router.js";
 import type { VercelLikeRequest, VercelLikeResponse } from "../src/http.js";
-import { createFakePro } from "./fake-pro.js";
+import { photoBackend } from "../src/pro/photos.js";
+import { handleProWebhook } from "../src/pro/receiver.js";
+import { createFakePro, signWebhook } from "./fake-pro.js";
 
 /**
  * Local demo: the real panel and backend, with a pretend Vinted.
@@ -35,7 +37,10 @@ process.env.MCP_AUTH_TOKEN ??= "demo-mcp-token";
 process.env.VINTED_MIN_REQUEST_INTERVAL_MS ??= "0";
 process.env.ACTIVE_HOURS ??= "0-0";
 process.env.ENABLE_UNOFFICIAL ??= "true";
+process.env.NODEJS_HELPERS ??= "0";
 process.env.VINTED_PRO_MIN_REQUEST_INTERVAL_MS ??= "0";
+process.env.BLOB_READ_WRITE_TOKEN ??= "demo-blob";
+const DEMO_PORT = Number(process.env.PORT ?? 3000);
 
 // ---------------------------------------------------------------- pretend Vinted
 const messages: Record<string, { id: number; entity_type: string; entity: Record<string, unknown>; created_at_ts: string }[]> = {
@@ -163,6 +168,37 @@ function pretendVinted(url: URL, init?: RequestInit): Response {
 export const fakePro = createFakePro({ accessKey: "DEMO_ACCESS", signingKey: "demo-signing-secret" });
 
 const realFetch = globalThis.fetch;
+
+// Photos uploaded in the demo are kept in memory and served from /demo-photos/.
+const demoPhotos = new Map<string, { type: string; bytes: Buffer }>();
+photoBackend.put = async (pathname, body, options) => {
+  demoPhotos.set(pathname, { type: options.contentType, bytes: body });
+  return { url: `http://localhost:${DEMO_PORT}/demo-photos/${pathname}` } as Awaited<ReturnType<typeof photoBackend.put>>;
+};
+
+// Vinted does its work in the background: every couple of seconds the pretend
+// finishes what was created and sends the resulting events, signed, to the
+// webhook address the panel registered.
+setInterval(async () => {
+  fakePro.processPending();
+  while (fakePro.outbox.length) {
+    const event = fakePro.outbox.shift()!;
+    const body = JSON.stringify({ event_type: event.event_type, data: event.data });
+    for (const hook of fakePro.webhooks.values()) {
+      if (hook.event_types.length && !hook.event_types.includes(event.event_type)) continue;
+      try {
+        await realFetch(hook.url, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-vpi-webhook-hmac-sha256": signWebhook(body, hook.signing_key) },
+          body,
+        });
+      } catch {
+        /* the panel may not be reachable yet; the next event tries again */
+      }
+    }
+  }
+}, 1500);
+
 globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url);
   if (/^pro(-public-sandbox)?\.svc\.vinted\.com$/.test(url.hostname)) return fakePro.handle(url, init);
@@ -181,6 +217,12 @@ const server = createServer(async (req, res) => {
   if (pathname.startsWith("/api/app")) return void (await handleApp(r, s));
   if (pathname === "/api/mcp") return void (await mcpHandler(r, s));
   if (pathname === "/api/health") return void (await healthHandler(r, s));
+  if (pathname === "/api/pro/webhook") return void (await handleProWebhook(r, s));
+  if (pathname.startsWith("/demo-photos/")) {
+    const photo = demoPhotos.get(decodeURIComponent(pathname.slice("/demo-photos/".length)));
+    if (!photo) return void res.writeHead(404).end();
+    return void res.writeHead(200, { "content-type": photo.type }).end(photo.bytes);
+  }
 
   const file = normalize(join(PUBLIC, pathname === "/" ? "index.html" : pathname));
   if (!file.startsWith(PUBLIC)) {

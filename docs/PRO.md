@@ -55,6 +55,24 @@ zwraca, a blad w tresci zadania nie cytuje jego fragmentow.
 | 429 | Limit zapytan | Odczekaj; klient sam ponawia z uwzglednieniem `Retry-After` |
 | siec | Serwer nie siega Vinted Pro | Sprawdz status uslugi |
 
+## Panel
+
+Widoki Pro pokazuja sie w nawigacji, gdy funkcje nieoficjalne sa wylaczone
+(domyslnie). Wszystko, co cos zmienia u Vinted, dziala dwuetapowo: najpierw
+podglad tego, co zostanie wyslane, dopiero potem potwierdzenie.
+
+| Widok | Do czego |
+|---|---|
+| **Pulpit** | Stan polaczenia kont Pro, ostatnie zdarzenia, konfiguracja serwera (szyfrowanie, Upstash, surowe cialo webhookow, wgrywanie zdjec, token MCP, sekret crona) |
+| **Oferty** | Lista z kursorem, status kazdej oferty, zmiana ceny i szkicu/publikacji, usuwanie z potwierdzeniem, import ofert dodanych poza API i nadawanie im referencji (SKU) |
+| **Wystaw** | Formularz zbudowany ze slownikow Vinted: wyszukiwarka kategorii (tylko koncowe), stan, rozmiar paczki, kolory, rozmiar z grup kategorii, marka, cena, zdjecia, SKU. **Waliduj** pokazuje bledy przy polach, **Utworz** wysyla oferte jako szkic |
+| **Zamowienia** | Lista, szczegoly, przesylka, **etykieta PDF** (otwierana w nowej karcie), anulowanie z powodem (do 100 znakow), ponowne wystawienie |
+| **Zdarzenia** | Rejestracja webhooka, **Symuluj sprzedaz** (tylko sandbox), otrzymane zdarzenia i odrzucone dostawy |
+| **Konta** | Dodawanie tokenu, sprawdzenie polaczenia, usuwanie konta |
+
+Widok **Konta** przypomina, ze PL/PLN nie ma na liscie rynkow z dokumentacji, i
+powtarza to przy odpowiedzi 403 ze sprawdzenia polaczenia.
+
 ## Jak to dziala (skrot)
 
 - Kazde zadanie jest podpisane HMAC-SHA256 kluczem podpisu, ktory **nigdy nie
@@ -163,3 +181,27 @@ poprawek stalych.
 API przyjmuje wylacznie **publiczne, trwale adresy URL** (`photo_urls`); Vinted
 sam je pobiera. Nie uzywaj adresow, ktore wygasaja, ani zdjec z innych
 marketplace'ow.
+
+W formularzu **Wystaw** masz dwie drogi:
+
+1. **Wklej adres** zdjecia, ktore juz jest w internecie.
+2. **Wgraj plik** - dziala, gdy do projektu na Vercelu podlaczono sklep
+   **Vercel Blob** (zmienna `BLOB_READ_WRITE_TOKEN`; krok w [DEPLOY.md](DEPLOY.md)).
+   Bez niego przycisk wgrywania pokazuje, czego brakuje, a adresy dzialaja jak
+   dotad. Pulpit pokazuje, czy wgrywanie jest skonfigurowane.
+
+Jak to dziala przy wgrywaniu:
+
+- Panel **zmniejsza** zdjecie w przegladarce (dluzszy bok do 1600 px, JPEG), a
+  serwer przyjmie do 3 MB.
+- Serwer odczytuje format **z bajtow pliku**, nie z deklaracji przegladarki:
+  tylko JPEG, PNG i WebP. Plik w innym formacie albo uszkodzony base64 jest
+  odrzucany.
+- Plik laduje w sklepie Blob pod losowa nazwa (`pro-photos/RRRR-MM/<24 znaki hex>`),
+  bez nadpisywania istniejacych, jako **publiczny** - tylko ktos znajacy adres
+  moze go otworzyc, ale kazdy, kto go zna, tak.
+- Adres zwracany Vinted musi byc `https` (poza lokalnym demo).
+
+Zdjec **nie usuwamy** po usunieciu oferty: Vinted moze je jeszcze pobierac, a
+koszt trzymania kilku zdjec w Blob jest znikomy. Sprzatanie robisz w panelu
+Vercela (Storage -> Blob).

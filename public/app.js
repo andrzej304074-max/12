@@ -1,16 +1,22 @@
 import { api, fail, h, state, tool } from "./lib.js";
 
 // Views of the official Vinted Pro integration: always there.
-const OFFICIAL_VIEWS = [
-  ["accounts", "Konta"],
-  ["mcp", "MCP"],
+const PRO_VIEWS = [
+  ["pro-dashboard", "Pulpit"],
+  ["pro-items", "Oferty"],
+  ["pro-sell", "Wystaw"],
+  ["pro-orders", "Zamówienia"],
+  ["pro-events", "Zdarzenia"],
 ];
+const OFFICIAL_VIEWS = [...PRO_VIEWS, ["accounts", "Konta"], ["mcp", "MCP"]];
 
 // Views built on the unofficial consumer API: shown only when the server has
-// ENABLE_UNOFFICIAL=true (the page learns it from /me).
+// ENABLE_UNOFFICIAL=true (the page learns it from /me). The Pro views stay,
+// marked as such.
 const ALL_VIEWS = [
   ["messages", "Wiadomości"],
   ["dashboard", "Pulpit"],
+  ...PRO_VIEWS.map(([id, label]) => [id, `Pro: ${label}`]),
   ["accounts", "Konta"],
   ["watches", "Obserwowani"],
   ["finds", "Znaleziska"],
@@ -91,7 +97,7 @@ export async function refreshAccounts() {
 function renderSwitch() {
   const box = $("account-switch");
   box.replaceChildren();
-  if (state.accounts.length === 0) return;
+  if (!unofficial() || state.accounts.length === 0) return;
   const select = h(
     "select",
     {
@@ -177,6 +183,16 @@ async function pollBadges() {
   }
 }
 
+/** Where to land: messages if the consumer features are on, else the Pro dashboard once an account exists. */
+async function defaultView() {
+  if (unofficial() && state.accounts.length) return "#/messages";
+  try {
+    return (await tool("pro_list_accounts")).accounts.length ? "#/pro-dashboard" : "#/accounts";
+  } catch {
+    return "#/accounts";
+  }
+}
+
 async function start() {
   try {
     const me = await api("/me");
@@ -188,7 +204,7 @@ async function start() {
     $("login").hidden = true;
     $("app").hidden = false;
     await refreshAccounts();
-    if (!location.hash) location.hash = unofficial() && state.accounts.length ? "#/messages" : "#/accounts";
+    if (!location.hash) location.hash = await defaultView();
     await route();
     pollBadges();
   } catch (err) {

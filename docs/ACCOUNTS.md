@@ -1,5 +1,13 @@
 # Podlaczanie kont Vinted
 
+> **Uwaga: ten dokument dotyczy nieoficjalnego API konsumenckiego Vinted.**
+> Jest ono domyslnie ukryte (`ENABLE_UNOFFICIAL=true` je przywraca), bo Vinted
+> blokuje z serwerow ruch do niego - potwierdzone prawdziwym wynikiem: HTTP 403,
+> `server: cloudflare`, naglowki `x-datadome*` i adres `captcha-delivery.com`,
+> **zanim** haslo zostalo sprawdzone - a dokumentacja Vinted Pro uznaje
+> automatyzowanie konta konsumenckiego za naruszenie regulaminu. Konto
+> sprzedawcy Pro podlaczasz tokenem: zob. [PRO.md](PRO.md).
+
 Konta podlaczasz w panelu: **Konta → Dodaj konto**. To jedyna sciezka dodawania
 konta w panelu. Hasla nie przekazujesz przez MCP ani przez rozmowe z modelem.
 

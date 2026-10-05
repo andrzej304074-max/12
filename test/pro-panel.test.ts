@@ -5,6 +5,15 @@ import { handleApp } from "../src/app/router.js";
 import type { VercelLikeRequest, VercelLikeResponse } from "../src/http.js";
 import { setupPro, ACCESS_KEY, PRO_TOKEN, SIGNING_KEY } from "./pro-helpers.js";
 
+const put = vi.hoisted(() =>
+  vi.fn(async (pathname: string, _body: unknown, opts: { contentType: string }) => ({
+    url: `https://store123.public.blob.vercel-storage.com/${pathname}`,
+    pathname,
+    contentType: opts.contentType,
+  })),
+);
+vi.mock("@vercel/blob", () => ({ put }));
+
 /** The panel's Vinted Pro routes: the token goes in through a dedicated route and never comes back out. */
 
 let server: Server;
@@ -148,5 +157,124 @@ describe("feature flags", () => {
     const r = await call("/tool", { method: "POST", body: { name: "like_item", arguments: { item_id: "1", confirm: true } }, cookie });
     expect(r.status).toBe(404);
     expect(r.json.error).toBe("unknown_tool");
+  });
+});
+
+
+describe("ontology for the listing form", () => {
+  it("serves the leaf categories and dictionaries, cached after the first call", async () => {
+    const cookie = await signIn();
+    expect((await call("/pro-ontology")).status).toBe(401);
+    await call("/pro-account", { method: "POST", body: good, cookie });
+
+    const first = await call("/pro-ontology?account=pro-sklep-glowny", { cookie });
+    expect(first.status).toBe(200);
+    expect(first.json.fromCache).toBe(false);
+    expect(first.json.leaves.map((l: { id: number }) => l.id)).toEqual([1234, 1235]);
+    expect(first.json.leaves[1]).toMatchObject({ path: "Kobiety › Odzież wierzchnia › Płaszcze", disabledFields: ["brand"], sizeGroupIds: [4] });
+    expect(first.json.colors).toEqual([{ id: 9, title: "Niebieski" }, { id: 12, title: "Czarny" }]);
+    expect(first.json.sizeGroups).toEqual([{ id: 4, sizes: [{ id: 206, title: "S" }, { id: 207, title: "M" }] }]);
+
+    const second = await call("/pro-ontology?account=pro-sklep-glowny", { cookie });
+    expect(second.json.fromCache).toBe(true);
+    expect((await call("/pro-ontology?account=pro-sklep-glowny&refresh=1", { cookie })).json.fromCache).toBe(false);
+  });
+
+  it("explains a missing account and passes on a refused token", async () => {
+    const cookie = await signIn();
+    const none = await call("/pro-ontology", { cookie });
+    expect(none.status).toBe(400);
+    expect(none.json.message).toMatch(/Konta/);
+
+    await call("/pro-account", { method: "POST", body: { ...good, token: `${ACCESS_KEY},wrong-key` }, cookie });
+    const refused = await call("/pro-ontology?account=pro-sklep-glowny", { cookie });
+    expect(refused.status).toBe(502);
+    expect(refused.json).toMatchObject({ error: "auth", code: "INVALID_SIGNATURE" });
+    expect(refused.text).not.toContain("wrong-key");
+  });
+});
+
+describe("shipping label download", () => {
+  it("streams the PDF with download headers, and answers 404 JSON before the label exists", async () => {
+    const cookie = await signIn();
+    expect((await call("/pro-label?order=1")).status).toBe(401);
+    await call("/pro-account", { method: "POST", body: good, cookie });
+    const ready = fake.addOrder({ labelReady: true });
+    const early = fake.addOrder({ labelReady: false });
+
+    const res = await fetch(`${base}/api/app/pro-label?account=pro-sklep-glowny&order=${ready.id}`, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-disposition")).toBe(`attachment; filename="label_${ready.id}.pdf"`);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(Number(res.headers.get("content-length"))).toBe(bytes.length);
+
+    const notYet = await call(`/pro-label?account=pro-sklep-glowny&order=${early.id}`, { cookie });
+    expect(notYet.status).toBe(404);
+    expect(notYet.json).toMatchObject({ error: "not_found", code: "ORDER_NOT_FOUND" });
+    expect((await call("/pro-label?account=pro-sklep-glowny&order=1/../2", { cookie })).status).toBe(400);
+    expect((await call("/pro-label?account=pro-sklep-glowny", { cookie })).status).toBe(400);
+  });
+});
+
+describe("photo upload", () => {
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, ...Array(64).fill(1)]).toString("base64");
+  const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...Array(64).fill(2)]).toString("base64");
+  const WEBP = Buffer.from(["RIFF", "\0\0\0\0", "WEBP", "VP8 "].join(""), "binary").toString("base64");
+
+  beforeEach(() => {
+    put.mockClear();
+  });
+
+  it("is switched off until a Blob store is connected, and says how to connect one", async () => {
+    const cookie = await signIn();
+    expect((await call("/me", { cookie })).json.setup.photoUpload).toBe(false);
+    const r = await call("/pro-upload", { method: "POST", body: { base64: JPEG }, cookie });
+    expect(r.status).toBe(503);
+    expect(r.json.error).toBe("blob_not_configured");
+    expect(r.json.message).toMatch(/BLOB_READ_WRITE_TOKEN/);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("stores a real image publicly and returns its address", async () => {
+    ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token" }));
+    const cookie = await signIn();
+    expect((await call("/me", { cookie })).json.setup.photoUpload).toBe(true);
+    for (const [data, type, ext] of [[JPEG, "image/jpeg", "jpg"], [PNG, "image/png", "png"], [`data:image/jpeg;base64,${JPEG}`, "image/jpeg", "jpg"]] as const) {
+      const r = await call("/pro-upload", { method: "POST", body: { base64: data }, cookie });
+      expect(r.status).toBe(200);
+      expect(r.json).toMatchObject({ contentType: type });
+      expect(r.json.url).toMatch(new RegExp(`^https://store123\\.public\\.blob\\.vercel-storage\\.com/pro-photos/\\d{4}-\\d{2}/[0-9a-f]{24}\\.${ext}$`));
+    }
+    const [pathname, , options] = put.mock.calls[0]!;
+    expect(options).toMatchObject({ access: "public", contentType: "image/jpeg", addRandomSuffix: false, allowOverwrite: false, token: "blob-token" });
+    expect(String(pathname)).toMatch(/^pro-photos\//);
+  });
+
+  it("reads the format from the bytes, not from what the browser says, and refuses everything else", async () => {
+    ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token" }));
+    const cookie = await signIn();
+    const html = Buffer.from("<html><script>alert(1)</script></html>").toString("base64");
+    for (const [name, body, message] of [
+      ["html pretending to be an image", { base64: html, mime: "image/jpeg" }, /Only JPEG, PNG and WebP/],
+      ["not base64", { base64: "!!!not base64!!!" }, /not valid base64/],
+      ["empty", { base64: "" }, /not valid base64/],
+      ["too large", { base64: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(3_100_000)]).toString("base64") }, /limit is 3000000/],
+    ] as const) {
+      const r = await call("/pro-upload", { method: "POST", body, cookie });
+      expect(r.status, name).toBe(400);
+      expect(r.json.message, name).toMatch(message);
+    }
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("needs a session and the panel's own origin", async () => {
+    ({ fake } = setupPro({ ADMIN_PASSWORD: "panel-pass", BLOB_READ_WRITE_TOKEN: "blob-token" }));
+    expect((await call("/pro-upload", { method: "POST", body: { base64: JPEG } })).status).toBe(401);
+    const cookie = await signIn();
+    expect((await call("/pro-upload", { method: "POST", body: { base64: JPEG }, cookie, origin: "https://evil.example" })).status).toBe(403);
+    expect(put).not.toHaveBeenCalled();
   });
 });

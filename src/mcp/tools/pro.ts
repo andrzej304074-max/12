@@ -509,7 +509,7 @@ const createItemsTool: Tool = {
     const problems = problemsOf(checked);
     checked.forEach((c, i) => {
       if (c.payload && c.payload.is_draft === false && !publish) {
-        problems.push({ index: i, field: "is_draft", message: "This would publish a live listing; pass publish: true to confirm that is intended.", level: "error" });
+        problems.push({ index: i, field: "is_draft", code: "PUBLISH_NEEDS_FLAG", message: "This would publish a live listing; pass publish: true to confirm that is intended.", level: "error" });
       }
     });
     const blocking = problems.some((p) => p.level === "error");
