@@ -162,8 +162,10 @@ let cached: Config | null = null;
 
 export function getConfig(): Config {
   if (cached) return cached;
-  const upstashUrl = str("UPSTASH_REDIS_REST_URL");
-  const upstashToken = str("UPSTASH_REDIS_REST_TOKEN");
+  // The Vercel integration for Upstash often names its variables KV_REST_API_*;
+  // accept those too, with the UPSTASH_* names taking precedence.
+  const upstashUrl = str("UPSTASH_REDIS_REST_URL") ?? str("KV_REST_API_URL");
+  const upstashToken = str("UPSTASH_REDIS_REST_TOKEN") ?? str("KV_REST_API_TOKEN");
   cached = {
     mcpAuthToken: str("MCP_AUTH_TOKEN"),
     cronSecret: str("CRON_SECRET"),

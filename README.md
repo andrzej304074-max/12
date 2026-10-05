@@ -32,6 +32,9 @@ i [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ## Deploy na Vercel
 
+Pelna instrukcja krok po kroku (import z GitHuba, zmienne, Upstash, sprawdzenie,
+typowe problemy): **[docs/DEPLOY.md](docs/DEPLOY.md)**. Skrot dla CLI:
+
 ```bash
 npm i -g vercel
 vercel link          # podepnij katalog do projektu na Vercel
@@ -42,10 +45,14 @@ vercel env add CRON_SECRET production         # dowolny dlugi sekret
 vercel --prod
 ```
 
-Upstash dodaj przez **Vercel → Storage → Upstash Redis**; zmienne
-`UPSTASH_REDIS_REST_URL` i `UPSTASH_REDIS_REST_TOKEN` wstawia sam. Zrob to
-**przed** podlaczeniem kont. Pelna lista zmiennych z opisami:
+Upstash dodaj przez **Vercel → Storage → Upstash Redis**. Kod rozpoznaje
+zmienne `UPSTASH_REDIS_REST_URL` / `_TOKEN` oraz `KV_REST_API_URL` / `_TOKEN`
+(te drugie czesto wstawia integracja). Zrob to **przed** podlaczeniem kont. Pelna lista zmiennych z opisami:
 [`.env.example`](.env.example).
+
+> **Cron:** domyslny harmonogram to raz dziennie (`0 7 * * *`), bo plan Hobby
+> nie przyjmuje czestszych. Na planie Pro zmien `schedule` w `vercel.json` na
+> `*/10 * * * *`.
 
 > `ENCRYPTION_KEY` szyfruje zapisane tokeny kont. Zmiana klucza oznacza
 > ponowne podlaczenie wszystkich kont, wiec zachowaj jego kopie poza repozytorium.
@@ -169,7 +176,7 @@ tylko podglad i niczego nie wysyla.
 
 1. `watch_seller` zapisuje sprzedawce i **zaznacza jego obecne oferty jako juz
    widziane** - dzieki temu nie dostajesz na start calego archiwum.
-2. Cron (`vercel.json`, domyslnie co 10 minut) odpytuje kazdego obserwowanego
+2. Cron (`vercel.json`, domyslnie raz dziennie, na planie Pro co 10 minut) odpytuje kazdego obserwowanego
    sprzedawce o najnowsze oferty, sprawdza nowe wiadomosci i odswieza sesje.
 3. Nowe pozycje trafiaja do kolejki znalezisk razem z `suggestedOfferPrice`
    (domyslnie -20%; zmienisz w zakladce Automatyka albo przy sprzedawcy).
@@ -181,9 +188,10 @@ tylko podglad i niczego nie wysyla.
    kolejce. Domyslnie automat jest wylaczony.
 
 > **Uwaga o planie Vercel:** darmowy plan Hobby pozwala na crona raz na dobe i
-> do 12 funkcji. Harmonogram `*/10 * * * *` wymaga planu Pro. Na Hobby zmien
-> `schedule` w `vercel.json` na np. `0 9 * * *` albo uzywaj przycisku „Uruchom
-> przebieg teraz". Panel jest jedna funkcja, wiec miesci sie w limicie.
+> do 12 funkcji, dlatego domyslny harmonogram w `vercel.json` to `0 7 * * *`.
+> Na planie Pro zmien go na `*/10 * * * *` (co 10 minut). Na Hobby mozesz tez
+> uzywac przycisku „Uruchom przebieg teraz". Panel jest jedna funkcja, wiec
+> miesci sie w limicie.
 
 ## Bezpieczenstwo
 
@@ -221,7 +229,7 @@ tylko podglad i niczego nie wysyla.
 ```bash
 npm install
 npm run typecheck
-npm test            # 286 testow, nie dotykaja sieci
+npm test            # 291 testow, nie dotykaja sieci
 npm run demo        # panel z atrapa Vinted
 ```
 

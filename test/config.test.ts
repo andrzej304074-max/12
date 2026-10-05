@@ -1,5 +1,43 @@
-import { describe, expect, it } from "vitest";
-import { parseAccounts } from "../src/config.js";
+import { beforeEach, describe, expect, it } from "vitest";
+import { getConfig, parseAccounts, resetConfigCache } from "../src/config.js";
+import { freshEnv } from "./helpers.js";
+
+describe("Upstash credentials", () => {
+  beforeEach(() => {
+    freshEnv();
+    for (const key of ["KV_REST_API_URL", "KV_REST_API_TOKEN"]) delete process.env[key];
+    resetConfigCache();
+  });
+
+  it("is off when nothing is set", () => {
+    expect(getConfig().upstash).toBeNull();
+  });
+
+  it("reads the UPSTASH_* names", () => {
+    process.env.UPSTASH_REDIS_REST_URL = "https://a.upstash.io/";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "tok-a";
+    expect(getConfig().upstash).toEqual({ url: "https://a.upstash.io", token: "tok-a" });
+  });
+
+  it("falls back to the KV_REST_API_* names the Vercel integration sets", () => {
+    process.env.KV_REST_API_URL = "https://kv.upstash.io";
+    process.env.KV_REST_API_TOKEN = "tok-kv";
+    expect(getConfig().upstash).toEqual({ url: "https://kv.upstash.io", token: "tok-kv" });
+  });
+
+  it("prefers the UPSTASH_* names when both exist", () => {
+    process.env.UPSTASH_REDIS_REST_URL = "https://a.upstash.io";
+    process.env.UPSTASH_REDIS_REST_TOKEN = "tok-a";
+    process.env.KV_REST_API_URL = "https://kv.upstash.io";
+    process.env.KV_REST_API_TOKEN = "tok-kv";
+    expect(getConfig().upstash?.url).toBe("https://a.upstash.io");
+  });
+
+  it("needs both the URL and the token", () => {
+    process.env.KV_REST_API_URL = "https://kv.upstash.io";
+    expect(getConfig().upstash).toBeNull();
+  });
+});
 
 describe("parseAccounts", () => {
   it("returns nothing when unset", () => {

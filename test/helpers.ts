@@ -11,7 +11,7 @@ export function freshEnv(extra: Record<string, string | undefined> = {}) {
   for (const key of [
     "VERCEL", "MCP_AUTH_TOKEN", "ADMIN_PASSWORD", "SESSION_SECRET", "ENCRYPTION_KEY",
     "VINTED_ACCOUNTS", "NOTIFY_WEBHOOK_URL", "AUTO_ACTIONS_ENABLED", "ACTIVE_HOURS",
-    "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "CRON_SECRET",
+    "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "KV_REST_API_URL", "KV_REST_API_TOKEN", "CRON_SECRET",
   ]) {
     delete process.env[key];
   }
