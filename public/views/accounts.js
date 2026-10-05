@@ -89,7 +89,7 @@ export async function render(root, ctx) {
 
   async function showLog() {
     try {
-      const { log } = await api("/accounts/login-log");
+      const { log } = await api("/login-log");
       logBox.replaceChildren(
         log.length === 0
           ? h("p", { class: "muted" }, "Brak prób logowania.")
@@ -123,7 +123,7 @@ export async function render(root, ctx) {
           error.hidden = true;
           submit.disabled = true;
           try {
-            const result = await api("/accounts/login", {
+            const result = await api("/account-login", {
               method: "POST",
               body: {
                 domain: market.value,
@@ -170,7 +170,7 @@ export async function render(root, ctx) {
               err.hidden = true;
               go.disabled = true;
               try {
-                done(await api("/accounts/verify", { method: "POST", body: { loginId: challenge.loginId, code: code.value } }));
+                done(await api("/account-verify", { method: "POST", body: { loginId: challenge.loginId, code: code.value } }));
               } catch (ex) {
                 err.textContent = LOGIN_MESSAGES[ex.kind] || ex.message;
                 err.hidden = false;

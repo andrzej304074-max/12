@@ -149,11 +149,11 @@ describe("session cookie", () => {
 
 describe("protection", () => {
   it("refuses every API call without a session", async () => {
-    for (const path of ["/tools", "/accounts", "/mcp-config", "/accounts/login-log"]) {
+    for (const path of ["/tools", "/accounts", "/mcp-config", "/login-log"]) {
       expect((await call(path)).status).toBe(401);
     }
     expect((await call("/tool", { method: "POST", body: { name: "list_accounts" } })).status).toBe(401);
-    expect((await call("/accounts/login", { method: "POST", body: {} })).status).toBe(401);
+    expect((await call("/account-login", { method: "POST", body: {} })).status).toBe(401);
   });
 
   it("refuses a state-changing request without an Origin header", async () => {
@@ -251,7 +251,7 @@ describe("connecting an account", () => {
   it("connects through the panel and never echoes secrets back", async () => {
     vinted();
     const cookie = await signIn();
-    const r = await call("/accounts/login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: "pw-not-to-leak" } });
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: "pw-not-to-leak" } });
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ status: "connected", account: { login: "ola" } });
     for (const secret of ["access-secret-123", "refresh-secret-456", "pw-not-to-leak"]) expect(r.text).not.toContain(secret);
@@ -264,7 +264,7 @@ describe("connecting an account", () => {
   it("maps login failures to HTTP statuses with a kind", async () => {
     mockFetch(() => jsonRes(400, { error: "invalid_grant" }));
     const cookie = await signIn();
-    const r = await call("/accounts/login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "a@b.pl", password: "x" } });
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "a@b.pl", password: "x" } });
     expect(r.status).toBe(401);
     expect(r.json.error).toBe("bad_credentials");
   });
@@ -272,7 +272,7 @@ describe("connecting an account", () => {
   it("rejects a host that is not Vinted", async () => {
     const { calls } = vinted();
     const cookie = await signIn();
-    const r = await call("/accounts/login", { method: "POST", cookie, body: { domain: "evil.example", email: "a@b.pl", password: "x" } });
+    const r = await call("/account-login", { method: "POST", cookie, body: { domain: "evil.example", email: "a@b.pl", password: "x" } });
     expect(r.status).toBe(400);
     expect(calls).toHaveLength(0);
   });
@@ -287,17 +287,17 @@ describe("connecting an account", () => {
       return jsonRes(200, { user: { id: 1, login: "kasia" } });
     });
     const cookie = await signIn();
-    const start = await call("/accounts/login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "k@b.pl", password: "x" } });
+    const start = await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "k@b.pl", password: "x" } });
     expect(start.json.status).toBe("challenge");
-    const done = await call("/accounts/verify", { method: "POST", cookie, body: { loginId: start.json.loginId, code: "123456" } });
+    const done = await call("/account-verify", { method: "POST", cookie, body: { loginId: start.json.loginId, code: "123456" } });
     expect(done.json).toMatchObject({ status: "connected", account: { login: "kasia" } });
   });
 
   it("serves the login log without passwords", async () => {
     vinted();
     const cookie = await signIn();
-    await call("/accounts/login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: "pw-not-to-leak" } });
-    const r = await call("/accounts/login-log", { cookie });
+    await call("/account-login", { method: "POST", cookie, body: { domain: "www.vinted.pl", email: "ola@example.com", password: "pw-not-to-leak" } });
+    const r = await call("/login-log", { cookie });
     expect(r.json.log).toHaveLength(1);
     expect(r.text).not.toContain("pw-not-to-leak");
   });

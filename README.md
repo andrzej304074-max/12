@@ -229,7 +229,7 @@ tylko podglad i niczego nie wysyla.
 ```bash
 npm install
 npm run typecheck
-npm test            # 291 testow, nie dotykaja sieci
+npm test            # 298 testow, nie dotykaja sieci
 npm run demo        # panel z atrapa Vinted
 ```
 
@@ -245,7 +245,7 @@ public/               # panel (HTML + vanilla JS, bez frameworka i bez builda)
   views/              # jeden plik na zakladke
 api/
   mcp.ts              # endpoint MCP (Streamable HTTP, bezstanowy)
-  app/[...path].ts    # backend panelu (jedna funkcja na wszystkie /api/app/*)
+  app/[...path].ts    # backend panelu (jedna funkcja; trasy jednosegmentowe, zob. docs/DEPLOY.md)
   cron/monitor.ts     # zaplanowany przebieg monitoringu
   health.ts           # liveness
 src/

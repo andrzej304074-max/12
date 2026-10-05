@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Remote MCP server for Vinted sellers: comps research, price estimation, listing preparation and seller monitoring. Runs on Vercel.",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

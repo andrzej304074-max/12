@@ -31,7 +31,8 @@ import {
 /**
  * Backend of the web panel, mounted at /api/app/*.
  *
- * Everything except /login and /me needs a valid session. The panel does not
+ * Every route is ONE path segment (see routeOf). Everything except /login and
+ * /me needs a valid session. The panel does not
  * reimplement any feature: /tool runs the same tool handlers the MCP endpoint
  * runs, through the same callTool(). Only the account login (which carries a
  * password and a verification code) has dedicated routes, because that data
@@ -85,14 +86,30 @@ function setupFlags() {
   };
 }
 
+/**
+ * Works out which panel route a request is for.
+ *
+ * Vercel turns the catch-all file api/app/[...path].ts into a route that
+ * matches exactly ONE path segment, so every panel route is a single segment
+ * (/account-login, not /accounts/login) - a test enforces that. The function may
+ * receive the original URL or an internal one that carries the segment in a
+ * "...path" query parameter; both are understood.
+ */
+export function routeOf(rawUrl: string): string {
+  const url = new URL(rawUrl || "/", "http://local");
+  let path = url.pathname;
+  if (path.includes("[") || /%5b/i.test(path)) {
+    path = `/api/app/${url.searchParams.get("...path") ?? ""}`;
+  }
+  return path.replace(/^\/api\/app/, "").replace(/\/+$/, "") || "/";
+}
+
 export async function handleApp(
   req: VercelLikeRequest,
   res: VercelLikeResponse,
 ): Promise<void> {
   const method = req.method ?? "GET";
-  const route = new URL(req.url ?? "/", "http://local").pathname
-    .replace(/^\/api\/app/, "")
-    .replace(/\/+$/, "") || "/";
+  const route = routeOf(req.url ?? "/");
 
   try {
     if (method !== "GET" && !sameOrigin(req)) {
@@ -197,12 +214,12 @@ export async function handleApp(
       return;
     }
 
-    if (route === "/accounts/login-log" && method === "GET") {
+    if (route === "/login-log" && method === "GET") {
       sendJson(res, 200, { log: await getLoginLog() });
       return;
     }
 
-    if (route === "/accounts/login" && method === "POST") {
+    if (route === "/account-login" && method === "POST") {
       const body = asObject(await readJsonBody(req));
       const result = await startLogin({
         ...(typeof body.domain === "string" ? { domain: body.domain } : {}),
@@ -215,7 +232,7 @@ export async function handleApp(
       return;
     }
 
-    if (route === "/accounts/verify" && method === "POST") {
+    if (route === "/account-verify" && method === "POST") {
       const body = asObject(await readJsonBody(req));
       const result = await verifyLogin({
         loginId: typeof body.loginId === "string" ? body.loginId : "",

@@ -1,131 +1,194 @@
 # Wdrozenie na Vercel - krok po kroku
 
-Wdrazasz jeden projekt, ktory zawiera panel www (`/`), endpoint MCP
-(`/api/mcp`) i cron monitoringu (`/api/cron/monitor`).
+Wdrazasz jeden projekt: panel www (`/`), endpoint MCP (`/api/mcp`), backend
+panelu (`/api/app/*`) i cron monitoringu (`/api/cron/monitor`). Calosc to okolo
+20-30 minut.
 
-> Pierwszego wdrozenia na prawdziwym Vercelu nie dalo sie sprawdzic przy
-> pisaniu kodu. Jesli build zglosi blad, wklej jego log - to najszybsza droga
-> do poprawki.
+## Co zostalo sprawdzone przed wdrozeniem, a czego nie
+
+Sprawdzone lokalnie prawdziwym narzedziem Vercela (`vercel build`, CLI 62) na
+czystej kopii repozytorium:
+
+- instalacja z `package-lock.json`, `npm run build`, kompilacja czterech funkcji,
+- `vercel.json` (funkcje, cron) przyjety bez ostrzezen, runtime `nodejs22.x`,
+- zbudowane funkcje uruchomione w Node i wywolane jak przez klienta: panel
+  (logowanie, sesja, narzedzia), MCP (`initialize`, `tools/list`, `tools/call`),
+  `/api/health`, cron z sekretem i bez.
+
+Tym sposobem wykryto i naprawiono jeden blad: Vercel zamienia plik
+`api/app/[...path].ts` w trase pasujaca do **jednego** segmentu sciezki, wiec
+trasy panelu sa jednosegmentowe (`/api/app/account-login`, nie
+`/api/app/accounts/login`). Test w `test/routes.test.ts` pilnuje tej zasady.
+
+Nie da sie sprawdzic bez prawdziwego Vercela: wyglad ekranow Marketplace
+(Upstash), Deployment Protection, faktyczne odpalenie crona. Nie da sie tez
+sprawdzic Vinted - patrz krok 9. Jesli build zglosi blad, wklej jego log.
 
 ## Zanim zaczniesz
 
-Trzy rzeczy, o ktore potykaja sie pierwsze wdrozenia:
-
 1. **Cron.** Domyslny harmonogram w `vercel.json` to `0 7 * * *` (raz dziennie),
-   bo plan Hobby (darmowy) nie przyjmuje czestszych. Na planie **Pro** zmien go
-   na `*/10 * * * *` (co 10 minut). Czestszy cron na Hobby konczy sie odrzuceniem
-   wdrozenia.
+   bo plan Hobby (darmowy) nie przyjmuje czestszych. Na planie **Pro** zmien go na
+   `*/10 * * * *`. Czestszy cron na Hobby konczy sie odrzuceniem wdrozenia.
 2. **Nazwy zmiennych Upstash.** Kod czyta `UPSTASH_REDIS_REST_URL` i
-   `UPSTASH_REDIS_REST_TOKEN`, a jako zapas rowniez `KV_REST_API_URL` i
-   `KV_REST_API_TOKEN`, ktore czesto wstawia integracja z Vercel. Jedne albo
-   drugie wystarcza.
-3. **Galaz produkcyjna.** Vercel domyslnie wdraza produkcje z `main`. Kod jest na
-   `claude/sharp-volta-8erp64`. Albo scal ja do `main`, albo w
-   **Settings → Git → Production Branch** wpisz te galaz.
+   `UPSTASH_REDIS_REST_TOKEN`, a jako zapas `KV_REST_API_URL` i
+   `KV_REST_API_TOKEN`, ktore czesto wstawia integracja z Vercela.
+3. **Galaz produkcyjna.** Domyslna galezia repozytorium na GitHubie to
+   `claude/sharp-volta-8erp64` (jedyna), wiec Vercel uzyje jej jako produkcyjnej -
+   nic nie musisz scalac do `main`. Sprawdz w **Settings → Git → Production
+   Branch**. Kazdy push na te galaz uruchamia nowe wdrozenie produkcyjne.
 
-## 1. Wygeneruj sekrety
+## 1. Przygotuj sekrety
 
 Zapisz je w menedzerze hasel.
 
-- Mac/Linux: `openssl rand -hex 32` (uruchom trzy razy).
-- Windows (PowerShell 7):
-  `[Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))`
-
-Potrzebujesz:
-
-| Zmienna | Skad |
+| Zmienna | Co wpisac |
 | --- | --- |
-| `ENCRYPTION_KEY` | 64 znaki hex z generatora |
-| `MCP_AUTH_TOKEN` | 64 znaki hex z generatora |
-| `CRON_SECRET` | 64 znaki hex z generatora |
-| `ADMIN_PASSWORD` | Wymysl dlugie haslo do panelu |
+| `ADMIN_PASSWORD` | Dlugie haslo do panelu, wymyslone przez Ciebie |
+| `ENCRYPTION_KEY` | Dokladnie 64 znaki szesnastkowe (0-9, a-f) |
+| `MCP_AUTH_TOKEN` | 64 znaki szesnastkowe |
+| `CRON_SECRET` | 64 znaki szesnastkowe |
 
-**Skopiuj `ENCRYPTION_KEY` w bezpieczne miejsce.** Zgubiony klucz oznacza
-koniecznosc ponownego podlaczenia wszystkich kont Vinted.
+Generowanie (trzy razy, po jednej wartosci dla kazdej z trzech pozycji):
 
-## 2. Zaimportuj projekt
+- Mac/Linux: `openssl rand -hex 32`
+- Windows (PowerShell):
+  ```
+  $b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ($b | ForEach-Object { $_.ToString("x2") }) -join ""
+  ```
 
-1. Wejdz na vercel.com/new i zaloguj sie przez GitHub.
-2. Wybierz repozytorium `andrzej304074-max/12` → **Import**.
-3. **Framework Preset**: „Other". Katalog glowny i komendy zostaw domyslne
-   (`npm run build` to tylko sprawdzenie typow).
-4. **Jeszcze nie klikaj Deploy** - najpierw zmienne.
+**Skopiuj `ENCRYPTION_KEY` poza Vercel.** Zgubiony lub zmieniony klucz oznacza
+ponowne podlaczenie wszystkich kont Vinted.
 
-## 3. Dodaj zmienne srodowiskowe
+## 2. Zaimportuj repozytorium
 
-W formularzu importu (sekcja Environment Variables) albo pozniej w
-Settings → Environment Variables. Srodowisko: **Production**.
+1. vercel.com/signup → zaloguj sie przez GitHub (plan Hobby jest darmowy).
+2. **Add New… → Project**.
+3. Znajdz `andrzej304074-max/12` → **Import**. Jesli go nie ma na liscie:
+   **Adjust GitHub App Permissions** i daj Vercelowi dostep do repozytorium.
 
-- `ADMIN_PASSWORD`
-- `ENCRYPTION_KEY`
-- `MCP_AUTH_TOKEN`
-- `CRON_SECRET`
-- opcjonalnie `NOTIFY_WEBHOOK_URL` - adres webhooka Discorda lub Slacka, na
-  ktory przyjda powiadomienia o znaleziskach i nowych wiadomosciach
+## 3. Ustawienia projektu (ekran importu)
+
+- **Framework Preset:** Other.
+- **Root Directory:** bez zmian.
+- **Output Directory:** wlacz **Override** i wpisz `public` (tam lezy panel).
+- **Build Command** i **Install Command:** bez zmian. Build to samo sprawdzenie
+  typow (kilka sekund). Wersja Node (22.x) jest przypieta w `package.json`.
+
+## 4. Zmienne srodowiskowe (ten sam ekran)
+
+Dodaj `ADMIN_PASSWORD`, `ENCRYPTION_KEY`, `MCP_AUTH_TOKEN` i `CRON_SECRET`.
+Zostaw domyslnie zaznaczone srodowiska; jesli jest przelacznik **Sensitive**,
+wlacz go dla sekretow. Opcjonalnie `NOTIFY_WEBHOOK_URL` (Discord/Slack) -
+powiadomienia o znaleziskach i nowych wiadomosciach.
 
 Pelna lista zmiennych z opisami: [`.env.example`](../.env.example).
 
-## 3a. Dodaj baze Upstash (zrob to przed podlaczaniem kont)
+## 5. Pierwszy deploy
 
-1. W projekcie: **Storage → Create Database** (lub Marketplace → Upstash) →
-   **Upstash Redis**. Plan darmowy wystarczy.
-2. Wybierz region blisko funkcji (np. Frankfurt) i podlacz baze do projektu.
-3. Sprawdz w Settings → Environment Variables, jakie nazwy zmiennych zostaly
-   dodane. `UPSTASH_REDIS_REST_*` albo `KV_REST_API_*` - oba warianty dzialaja.
+**Deploy** (1-2 minuty). Przy bledzie: nieudane wdrozenie → **Build Logs** →
+skopiuj log i wklej.
 
-Bez Upstash konta, obserwowani i limity ginaja po kazdym wywolaniu funkcji, a
-blokada po blednych haslach do panelu nie dziala miedzy wywolaniami.
+## 6. Baza Upstash (przed podlaczaniem kont)
 
-## 4. Deploy
+Bez niej konta, obserwowani i limity gina po kazdym wywolaniu funkcji, a blokada
+po blednych haslach do panelu nie dziala miedzy wywolaniami.
 
-1. Kliknij **Deploy** (1-2 minuty).
-2. Zmiana zmiennych po wdrozeniu wymaga **Redeploy**: Deployments → trzy kropki
-   przy ostatnim wdrozeniu → Redeploy.
-3. Przy bledzie builda otworz log i sprawdz: „Cannot find module ... .js"
-   (problem z importami) albo komunikat o `maxDuration` lub o cronie.
+**Wariant A, z Vercela:**
 
-## 5. Sprawdz, czy dziala
+1. W projekcie: **Storage → Create Database → Upstash → Redis**, plan Free,
+   region np. Frankfurt.
+2. **Connect Project** → wybierz ten projekt (nazwy przyciskow moga sie roznic).
+3. Vercel dodaje zmienne, zwykle `KV_REST_API_URL` i `KV_REST_API_TOKEN` - kod
+   rozpoznaje je tak samo jak `UPSTASH_REDIS_REST_*`. Uzywany jest token
+   odczyt+zapis, nie `..._READ_ONLY_TOKEN`.
 
-1. `https://TWOJ-PROJEKT.vercel.app/api/health` → `"status":"ok"`.
-2. `https://TWOJ-PROJEKT.vercel.app/` → zaloguj sie haslem z `ADMIN_PASSWORD`.
-3. **Pulpit → Konfiguracja serwera**: Upstash, klucz szyfrowania i token MCP
-   powinny miec „ok". Czego brakuje, dodaj i zrob Redeploy.
+**Wariant B, bezposrednio w Upstash:**
 
-## 6. Podlacz konto Vinted
+1. console.upstash.com → utworz baze Redis (region EU, plan Free).
+2. W sekcji REST API skopiuj URL i token.
+3. W Vercelu: **Settings → Environment Variables** → `UPSTASH_REDIS_REST_URL` i
+   `UPSTASH_REDIS_REST_TOKEN`.
 
-**Konta → Dodaj konto**: rynek, login, haslo, kod SMS. Potem **Testuj**.
+## 7. Redeploy
 
-Endpointy Vinted nie sa oficjalnym API i nie dalo sie ich sprawdzic na zywo.
-Vinted moze tez zablokowac logowanie z serwera (CAPTCHA) - panel zatrzyma sie
-wtedy po jednej probie i napisze o tym. Szczegoly i procedura korekty pol
-logowania: [ACCOUNTS.md](ACCOUNTS.md).
+Zmienne dzialaja dopiero po nowym wdrozeniu: **Deployments → najnowsze → ⋯ →
+Redeploy**.
 
-## 7. Podlacz klienta MCP
+## 8. Sprawdz, czy dziala
 
-Zakladka **MCP** w panelu podaje gotowe polecenie:
+1. Adres projektu: **Overview → Domains** (np. `https://twoj-projekt.vercel.app`).
+2. `https://twoj-projekt.vercel.app/api/health` → `"status":"ok"`,
+   `"authConfigured":true`, `"durableStorage":true`.
+3. `https://twoj-projekt.vercel.app/` → zaloguj sie haslem z `ADMIN_PASSWORD`.
+4. **Pulpit → Konfiguracja serwera:** Upstash, klucz szyfrowania, token MCP i
+   sekret crona maja miec „ok". Czego brakuje, dodaj i zrob Redeploy.
+
+## 9. Podlacz konto Vinted
+
+1. **Konta → Dodaj konto**.
+2. Rynek (np. `www.vinted.pl`), login (e-mail), haslo, nazwa → **Zaloguj**. Jesli
+   Vinted zada kodu, wpisz kod z SMS. Po sukcesie: „Polaczono jako @login".
+3. **Testuj**.
+
+Mozliwe problemy:
+
+- **„Vinted zazadal weryfikacji antybotowej":** Vinted zablokowal logowanie z
+  serwera. Panel niczego nie omija i zatrzymuje sie po jednej probie. Sprobuj
+  pozniej.
+- **„Unexpected response":** logowanie Vinted nie jest udokumentowanym API i nie
+  dalo sie go sprawdzic na zywo. Poprawka: [ACCOUNTS.md](ACCOUNTS.md).
+
+## 10. Podlacz klienta MCP
+
+Zakladka **MCP** w panelu → **Pokaz token w poleceniu**, potem w terminalu:
 
 ```bash
 claude mcp add --transport http vinted \
-  https://TWOJ-PROJEKT.vercel.app/api/mcp \
+  https://twoj-projekt.vercel.app/api/mcp \
   --header "Authorization: Bearer TWOJ_MCP_AUTH_TOKEN"
 ```
 
-## 8. Automat wlaczaj na samym koncu
+## 11. Monitoring
+
+1. **Obserwowani** → dodaj sprzedawce (ID albo link do profilu).
+2. Cron dziala raz dziennie o 7:00 UTC (plan Hobby). Na planie Pro zmien
+   `schedule` w `vercel.json` na `*/10 * * * *`.
+3. Reczny przebieg: przycisk **Uruchom przebieg teraz** na Pulpicie.
+
+## 12. Automat wlaczaj na samym koncu
 
 Najpierw jedna reczna oferta (`make_offer` z `confirm: true`) na testowym
-przedmiocie, zeby sprawdzic sciezki zapisu (procedura w
-[ACTIONS.md](ACTIONS.md)). Dopiero potem przelacznik na Pulpicie.
+przedmiocie, zeby sprawdzic sciezki zapisu - procedura w
+[ACTIONS.md](ACTIONS.md). Dopiero potem przelacznik na Pulpicie.
 
-## Czestsze problemy
+## Gdy cos nie dziala
 
 | Objaw | Co zrobic |
 | --- | --- |
 | Deploy odrzucony z powodu crona | Plan Hobby: zostaw `0 7 * * *` w `vercel.json` |
-| Pulpit: Upstash „brak" | Dodaj `UPSTASH_REDIS_REST_URL` i `_TOKEN` (albo `KV_REST_API_*`), Redeploy |
-| Panel: „Panel jest wylaczony" | Ustaw `ADMIN_PASSWORD`, Redeploy |
-| Konta: nie mozna dodac konta | Ustaw `ENCRYPTION_KEY`, Redeploy |
-| Klient MCP dostaje 500 / „no shared secret" | Ustaw `MCP_AUTH_TOKEN`, Redeploy |
-| Cron zwraca 401 | Ustaw `CRON_SECRET` (Vercel wysyla go sam), Redeploy |
+| Strona prosi o logowanie do Vercela | **Settings → Deployment Protection** → wylacz Vercel Authentication dla produkcji albo uzyj adresu z Overview → Domains, nie adresu konkretnego wdrozenia |
+| Logowanie: „Panel jest wylaczony" | Brak `ADMIN_PASSWORD` - dodaj, Redeploy |
+| Konta: nie mozna dodac konta | Brak `ENCRYPTION_KEY` - dodaj, Redeploy |
+| Pulpit: Upstash „brak" | Dodaj zmienne Upstash (krok 6), Redeploy |
+| Klient MCP dostaje blad 500 / „no shared secret" | Brak `MCP_AUTH_TOKEN` - dodaj, Redeploy |
+| Cron zwraca 401 | Brak `CRON_SECRET` (Vercel wysyla go sam) - dodaj, Redeploy |
 | Cron zwraca „skipped" | Brak Upstash - dodaj baze |
 | Po wygasnieciu funkcji znikaja konta | Brak Upstash |
-| Zmieniles `ENCRYPTION_KEY` i konta maja status „wymaga logowania" | Podlacz je ponownie (stary klucz nie odczyta zapisanych danych) |
+| Konta maja status „wymaga logowania" po zmianie klucza | Zmieniony `ENCRYPTION_KEY` nie odczyta starych danych - podlacz konta ponownie |
+| Panel laduje sie, ale przyciski nic nie robia, w konsoli bledy 404 na `/api/app/...` | Trasa panelu z wiecej niz jednym segmentem - zob. `test/routes.test.ts` |
+
+## Jak powtorzyc lokalna weryfikacje builda
+
+W czystym katalogu (kopia repozytorium bez `node_modules`):
+
+```bash
+npm ci
+mkdir -p .vercel
+cat > .vercel/project.json <<'EOF'
+{"projectId":"prj_localcheck000000000000000000","orgId":"team_localcheck00000000000000","settings":{"framework":null,"devCommand":null,"installCommand":null,"buildCommand":null,"outputDirectory":"public","rootDirectory":null,"nodeVersion":"22.x","directoryListing":false}}
+EOF
+VERCEL_TELEMETRY_DISABLED=1 CI=1 npx vercel build --prod --yes   # wynik w .vercel/output
+```
+
+Katalog `.vercel/` jest w `.gitignore`. Build nie loguje sie do Vercela i niczego
+nie wdraza.
