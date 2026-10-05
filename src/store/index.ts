@@ -53,10 +53,20 @@ export const keys = {
   likeCount: (accountId: string, day: string) => `cnt:like:${accountId}:${day}`,
   offerCount: (accountId: string, day: string) =>
     `cnt:offer:${accountId}:${day}`,
+  hourCount: (accountId: string, hour: string) =>
+    `cnt:hour:${accountId}:${hour}`,
+  limits: (accountId: string) => `limits:${accountId}`,
+  autopause: (accountId: string) => `autopause:${accountId}`,
+  actionLog: (accountId: string) => `actionlog:${accountId}`,
   lastRun: () => `monitor:lastRun`,
 };
 
 /** UTC day stamp used to scope the per-day action counters. */
 export function today(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
+}
+
+/** UTC hour stamp used to scope the per-hour action counter. */
+export function thisHour(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 13);
 }

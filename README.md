@@ -6,9 +6,10 @@ Szuka porownywalnych ofert, wylicza sensowna cene, rozwiazuje kategorie i marki,
 przygotowuje i sprawdza tresc oferty, a takze obserwuje wybranych sprzedawcow i
 zglasza ich nowe przedmioty wraz z cena negocjacyjna.
 
-Czego **nie** robi: nie publikuje, nie usuwa, nie polubia, nie pisze wiadomosci i
-nie wysyla ofert cenowych. Powody i instrukcja, jak ewentualnie dolozyc te akcje
-samemu, sa w [docs/ACTIONS.md](docs/ACTIONS.md).
+Umie tez dzialac na koncie: publikowac i usuwac oferty, polubiac, wysylac
+oferty cenowe i wiadomosci - zawsze po `confirm: true`. Opcjonalnie sam polubia
+i sklada oferte -20% na nowych przedmiotach wybranych sprzedawcow, w ramach
+limitow ustawianych w locie. Szczegoly: [docs/ACTIONS.md](docs/ACTIONS.md).
 
 ## Wymagania
 
@@ -98,6 +99,27 @@ Obie dzialaja lokalnie i nie wysylaja niczego do Vinted.
 | `run_monitor_pass` | Odpala przebieg od razu, bez czekania na crona |
 | `preview_offer_price` | Sama arytmetyka rabatu |
 
+### Akcje na koncie (wymagaja `confirm: true`)
+
+| Narzedzie | Do czego |
+| --- | --- |
+| `like_item` | Polubienie przedmiotu |
+| `make_offer` | Oferta cenowa (domyslnie cena wywolawcza -20%) |
+| `process_find` | Polubienie + oferta dla znaleziska, potem oznacza je jako zalatwione |
+| `send_message` | Wiadomosc do sprzedawcy |
+| `publish_listing` | Publikacja oferty (zdjecia wgrane wczesniej, podajesz `photo_ids`) |
+| `delete_listing` | Usuniecie wlasnej oferty |
+
+Bez `confirm: true` kazde z nich zwraca tylko podglad i niczego nie wysyla.
+
+### Automatyka i limity
+
+| Narzedzie | Do czego |
+| --- | --- |
+| `set_automation_limits` | Limity na dobe/godzine, okno godzin, pauza, rabat - w locie, per konto |
+| `get_automation_status` | Limity i ich zrodlo, zuzycie, kolejka, pauza, ostatnie akcje |
+| `resume_automation` | Zdejmuje pauze bezpiecznika |
+
 ### Diagnostyka
 
 | Narzedzie | Do czego |
@@ -117,7 +139,10 @@ Obie dzialaja lokalnie i nie wysylaja niczego do Vinted.
 4. `list_new_finds` pokazuje kolejke. Otwierasz link, decydujesz, a potem
    `mark_find_handled` zeby zniknelo z listy.
 
-Cron tylko wykrywa i zapisuje - nikogo nie zaczepia.
+5. Jesli sprzedawca ma `auto_like` / `auto_offer` **i** `AUTO_ACTIONS_ENABLED=true`,
+   cron sam polubia i sklada oferte - tylko w oknie godzin, w ramach limitu
+   godzinowego i dziennego, i nie w czasie pauzy bezpiecznika. Nadmiar czeka w
+   kolejce. Domyslnie automat jest wylaczony.
 
 > **Uwaga o planie Vercel:** darmowy plan Hobby pozwala na crona raz na dobe.
 > Harmonogram `*/10 * * * *` wymaga planu Pro. Na Hobby zmien `schedule` w
@@ -131,6 +156,9 @@ Cron tylko wykrywa i zapisuje - nikogo nie zaczepia.
 - **Nie udalo sie ich sprawdzic na zywo** przy pisaniu (srodowisko budujace nie
   mialo dostepu do vinted.pl), wiec pierwsze uruchomienie zacznij od
   `diagnose_connection`.
+- **Endpointy zapisu (polubienie, oferta, publikacja...) sa niezweryfikowane.**
+  Zanim wlaczysz automat, sprawdz je w DevTools i zrob jedna reczna oferte -
+  procedura w [docs/ACTIONS.md](docs/ACTIONS.md).
 - **Ceny to ceny wywolawcze, nie transakcyjne.** Vinted nie udostepnia publicznie
   cen sprzedazy, wiec `estimate_price` opisuje, czego chca sprzedajacy - i mowi
   to wprost w polu `notes`.
@@ -145,9 +173,10 @@ npm run typecheck
 npm test
 ```
 
-Testy (92) pokrywaja statystyke wyceny, arytmetyke rabatu, parsowanie
+Testy (135) pokrywaja statystyke wyceny, arytmetyke rabatu, parsowanie
 konfiguracji, uwierzytelnianie, redakcje sekretow w logach, warstwe protokolu
-MCP, silnik monitoringu i sam endpoint HTTP. Nie dotykaja sieci.
+MCP, silnik monitoringu, akcje zapisu (bramka `confirm`, limity, bezpiecznik,
+brak ponawiania), automatyke w cronie i sam endpoint HTTP. Nie dotykaja sieci.
 
 ## Struktura
 

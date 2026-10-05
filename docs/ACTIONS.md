@@ -1,73 +1,98 @@
-# Dlaczego serwer nie wykonuje akcji na Vinted
+# Akcje na Vinted i automatyka
 
-Ten serwer czyta i monitoruje. Nie publikuje ofert, nie usuwa ich, nie polubia
-przedmiotow, nie wysyla wiadomosci ani ofert cenowych. To swiadoma granica, a
-nie brak czasu - ponizej co dokladnie jest, czego nie ma i co trzeba rozstrzygnac,
-zanim dolozy sie reszte.
+Ten dokument opisuje wszystko, co serwer moze zmienic na Vinted: jak to dziala,
+jakie ma zabezpieczenia i co sprawdzic, zanim wlaczysz automat.
 
-## Co jest zaimplementowane
+## Akcje reczne
 
-| Obszar | Narzedzia |
+| Narzedzie | Co robi |
 | --- | --- |
-| Research | `search_similar_items`, `estimate_price`, `find_category`, `find_brand`, `get_item`, `get_seller` |
-| Przygotowanie oferty | `draft_listing`, `validate_listing` (obie czysto lokalne) |
-| Monitoring | `watch_seller`, `unwatch_seller`, `list_watches`, `list_new_finds`, `mark_find_handled`, `run_monitor_pass`, `preview_offer_price` |
-| Diagnostyka | `list_accounts`, `diagnose_connection` |
+| `like_item` | Dodaje przedmiot do ulubionych |
+| `make_offer` | Wysyla oferte cenowa; bez `price` = cena wywolawcza minus rabat (domyslnie 20%) |
+| `process_find` | Dla znaleziska z `list_new_finds`: polubienie + oferta, potem oznacza jako zalatwione |
+| `send_message` | Wiadomosc w rozmowie o przedmiocie |
+| `publish_listing` | Publikuje oferte (najpierw te same kontrole co `validate_listing`) |
+| `delete_listing` | Usuwa Twoja oferte. Nieodwracalne |
 
-Monitoring wykrywa nowe przedmioty u obserwowanych sprzedawcow i dolicza do
-kazdego cene negocjacyjna (domyslnie 20% ponizej ceny wywolawczej). Wynik ladu-
-je w kolejce `list_new_finds`. Kliknieciem w link otwierasz oferte i decydujesz
-sam.
+**Bramka potwierdzenia.** Kazde z tych narzedzi wywolane bez `confirm: true`
+niczego nie wysyla - zwraca podglad: co poszloby do Vinted i czy limity na to
+pozwalaja. Dopiero ponowne wywolanie z `confirm: true` wysyla.
 
-## Czego nie ma
+`publish_listing` nie wgrywa zdjec. Wgraj je w Vinted i podaj ich `photo_ids`.
 
-`publish_listing`, `delete_listing`, `like_item`, `make_offer`, `send_message`.
+## Automatyka
 
-Powody, w kolejnosci wagi:
+Automatyczne polubienie i oferta na nowych przedmiotach obserwowanych
+sprzedawcow. Wymaga dwoch rzeczy naraz:
 
-1. **Nieodwracalne zobowiazania wobec osob trzecich.** Oferta cenowa i wiadomosc
-   trafiaja do konkretnego czlowieka i sa wiazace w praktyce. Automat, ktory
-   wysyla je bez przeczytania oferty przez czlowieka, generuje zobowiazania,
-   ktorych nikt nie sprawdzil.
-2. **Skala zmienia charakter dzialania.** Jedna propozycja -20% to negocjacja.
-   Ta sama propozycja wysylana automatycznie do kazdej nowej oferty kilkunastu
-   obserwowanych sprzedawcow to zalew powiadomien dla ludzi, ktorzy o to nie
-   prosili.
-3. **Endpointow zapisu nie dalo sie zweryfikowac.** Sciezki write API Vinted sa
-   nieudokumentowane i nie bylo mozliwosci sprawdzenia ich na zywo podczas
-   pisania. Kod, ktory wysyla oferte cenowa pod nieprzetestowany endpoint, to
-   kod, ktory moze wyslac zla kwote.
-4. **Regulamin.** Vinted nie udostepnia publicznego API do dzialan sprzedazowych.
-   Odczyt katalogu to jedno, automatyczne skladanie ofert w cudzym imieniu -
-   drugie.
+1. `watch_seller` z `auto_like: true` i/lub `auto_offer: true` - per sprzedawca,
+2. `AUTO_ACTIONS_ENABLED=true` w zmiennych na Vercel - glowny wylacznik.
 
-## Czego nie ma i nie bedzie
+Co sie dzieje przy kazdym przebiegu crona:
 
-Warstwy anty-detekcyjnej: podszywania sie pod fingerprint przegladarki, rotacji
-User-Agentow, losowania opoznien pod detektory botow, omijania CAPTCHA czy 2FA.
+1. Wykrycie nowych przedmiotow, zapis znalezisk z cena oferty.
+2. Powiadomienie na webhook (jesli ustawiony).
+3. Kolejka automatycznych akcji - od najstarszych:
+   - **poza oknem godzin** (`ACTIVE_HOURS`) - nic nie wychodzi, czeka;
+   - **limit godzinowy** wyczerpany - reszta czeka do nastepnej godziny;
+   - **limit dzienny** wyczerpany - ta akcja czeka do jutra;
+   - **pauza bezpiecznika** - nic nie wychodzi do konca pauzy.
 
-Klient w `src/vinted/client.ts` robi odwrotnie - przedstawia sie uczciwie w
-User-Agent i honoruje `429` oraz `Retry-After`. Odstep miedzy zapytaniami
-(`VINTED_MIN_REQUEST_INTERVAL_MS`) jest po to, zeby nie obciazac cudzego
-serwisu, a nie zeby ukryc, ze to automat.
+Nic z kolejki nie przepada przez limity - tylko sie przesuwa w czasie.
 
-Warto wiedziec, ze `vinted-seller-mcp`, od ktorego zaczal sie ten projekt, sam
-deklaruje to samo: CAPTCHA i 2FA nigdy nie sa obchodzone, logowanie jest reczne,
-a publikacja, usuwanie i wiadomosci wymagaja jawnego potwierdzenia.
+### Bezpiecznik
 
-## Jesli mimo to chcesz dolozyc akcje zapisu
+Gdy Vinted przy akcji odpowie 403, 429 albo zwroci strone (np. captcha) zamiast
+danych, automat dla tego konta staje na `AUTOPAUSE_HOURS` (domyslnie 24 h).
+Akcje reczne nadal dzialaja. Przyczyne zobaczysz w `get_automation_status`,
+wznowienie: `resume_automation`.
 
-To Twoje repo i Twoja decyzja. Zanim dolozysz:
+Akcja zapisu nigdy nie jest ponawiana automatycznie po bledzie sieci lub 5xx -
+nie wiadomo, czy doszla, a powtorka mogla by wyslac oferte dwa razy.
 
-1. **Zweryfikuj endpointy.** Otworz DevTools na Vinted, wykonaj akcje recznie i
-   spisz faktyczna sciezke, metode oraz ksztalt body. Dopisz je do
-   `src/vinted/endpoints.ts` - to jedyne miejsce ze sciezkami.
-2. **Zachowaj bramke potwierdzenia.** Kazde narzedzie piszace powinno wymagac
-   `confirm: true` w argumentach i miec `destructiveHint: true` w adnotacjach,
-   tak jak robi to oryginalny serwer.
-3. **Nie wpinaj tego w crona.** `api/cron/monitor.ts` celowo tylko wykrywa.
-   Harmonogram, ktory sam zaczepia obcych ludzi, to inna kategoria programu.
-4. **Dodaj dzienne limity.** `MAX_LIKES_PER_DAY` i `MAX_OFFERS_PER_DAY` sa juz w
-   konfiguracji (`src/config.ts`) i czekaja na uzycie - liczniki z wygasaniem
-   dobowym sa w `src/store/index.ts` (`keys.likeCount`, `keys.offerCount`).
-5. **Sprawdz regulamin Vinted** dla swojego rynku i swojego typu konta.
+### Limity - ustawiane w locie
+
+Zmienne srodowiskowe to tylko wartosci domyslne. Kazde konto mozesz
+przestawic w rozmowie, bez redeployu:
+
+```
+set_automation_limits {
+  "account_id": "main",
+  "likes_per_day": 50,
+  "offers_per_day": 15,
+  "actions_per_hour": 10,
+  "active_hours": "9-21",
+  "autopause_hours": 12,
+  "discount_pct": 25
+}
+```
+
+Zmieniaja sie tylko podane pola. `0` wylacza dana akcje. `reset: true` wraca
+do wartosci z Vercela. `get_automation_status` pokazuje, ktora wartosc
+obowiazuje i skad pochodzi.
+
+Dzienne limity dotycza takze akcji recznych; okno godzin i limit godzinowy -
+tylko automatu.
+
+## Zanim wlaczysz automat - weryfikacja endpointow
+
+Sciezki zapisu w `src/vinted/endpoints.ts` sa oznaczone **UNVERIFIED** - nie
+dalo sie ich sprawdzic na zywo przy pisaniu. Kolejnosc:
+
+1. `diagnose_connection` - czy odczyt dziala.
+2. Na Vinted w przegladarce, z otwartym DevTools (zakladka Network), polub
+   przedmiot i zloz oferte recznie. Porownaj metode, sciezke i body z
+   `endpoints.ts` i `src/vinted/actions.ts`; popraw, jesli sie roznia.
+3. Jedna reczna `make_offer` z `confirm: true` na testowym przedmiocie.
+4. Dopiero wtedy `AUTO_ACTIONS_ENABLED=true`.
+
+## Czego tu nie ma
+
+Warstwy maskujacej automat: podszywania sie pod przegladarke, losowania
+opoznien i ruchow pod detektory botow, omijania CAPTCHA czy 2FA. Klient
+przedstawia sie uczciwie w User-Agent i zatrzymuje sie, gdy Vinted protestuje.
+Rolę ochrony konta pelnia zamiast tego umiarkowane limity, okno godzin,
+rozlozenie akcji w czasie i bezpiecznik.
+
+Sprawdz tez regulamin Vinted dla swojego rynku - automatyzacja akcji na
+koncie moze byc z nim sprzeczna niezaleznie od tempa.

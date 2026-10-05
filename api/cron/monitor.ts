@@ -12,9 +12,10 @@ import { getStore } from "../../src/store/index.js";
 /**
  * Scheduled watchlist poll, wired up in vercel.json.
  *
- * It only detects and records. It never likes an item, messages a seller or
- * sends an offer - a scheduled job acting on strangers unattended is exactly
- * what this design avoids. Findings wait in the store for a person.
+ * Detects new listings, notifies the webhook if one is set, and - only for
+ * watches with auto_like / auto_offer and only when AUTO_ACTIONS_ENABLED is
+ * true - works through the automatic-action queue under the account's limits,
+ * activity window and circuit breaker. See src/monitor/engine.ts.
  */
 export default async function handler(
   req: VercelLikeRequest,
@@ -39,18 +40,27 @@ export default async function handler(
   try {
     const results = await runPass();
     const totalFinds = results.reduce((sum, r) => sum + r.newFinds.length, 0);
+    const totalAutoActions = results.reduce(
+      (sum, r) => sum + r.autoActions.filter((a) => a.ok).length,
+      0,
+    );
     log.info("monitor pass complete", {
       accounts: results.length,
       totalFinds,
+      totalAutoActions,
     });
     sendJson(res, 200, {
       ranAt: new Date().toISOString(),
       accounts: results.length,
       totalFinds,
+      totalAutoActions,
       results: results.map((r) => ({
         accountId: r.accountId,
         sellersChecked: r.sellersChecked,
         newFinds: r.newFinds.length,
+        autoActions: r.autoActions,
+        autoStoppedBecause: r.autoStoppedBecause,
+        notified: r.notified,
         errors: r.errors,
       })),
     });

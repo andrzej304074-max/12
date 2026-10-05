@@ -6,11 +6,10 @@
  * fix instead of a hunt through the codebase. `diagnose_connection` probes
  * these and reports which ones still answer.
  *
- * Scope note: this module lists READ endpoints only. Actions that commit a
- * real transaction on the marketplace - publishing or deleting a listing,
- * submitting a price offer, messaging another member - are deliberately not
- * implemented here. See docs/ACTIONS.md for the reasoning and for what a
- * maintainer has to decide before adding them.
+ * Write endpoints are marked UNVERIFIED: they could not be exercised from the
+ * build environment. Before relying on one, perform the action once by hand
+ * in a browser with DevTools open and compare the method, path and body with
+ * what is written here. See docs/ACTIONS.md.
  */
 
 export const endpoints = {
@@ -37,6 +36,26 @@ export const endpoints = {
 
   /** Brand lookup. */
   brands: () => `/api/v2/brands`,
+
+  /** Toggle a favourite ("like") on an item. POST { type, item_id }. UNVERIFIED */
+  favouriteToggle: () => `/api/v2/user_favourites/toggle`,
+
+  /** Create a listing. POST { item: {...} }. UNVERIFIED */
+  createItem: () => `/api/v2/items`,
+
+  /** Delete own listing. DELETE. UNVERIFIED */
+  deleteItem: (itemId: string | number) => `/api/v2/items/${itemId}`,
+
+  /** Open (or fetch) the conversation about an item. POST. UNVERIFIED */
+  itemConversation: (itemId: string | number) =>
+    `/api/v2/conversations/item/${itemId}`,
+
+  /** Post a message into a conversation. POST { body }. UNVERIFIED */
+  conversationMessage: (conversationId: string | number) =>
+    `/api/v2/conversations/${conversationId}/messages`,
+
+  /** Submit a price offer. POST { item_id, price, currency }. UNVERIFIED */
+  offers: () => `/api/v2/offers`,
 } as const;
 
 /** Endpoints `diagnose_connection` probes, with a friendly label. */

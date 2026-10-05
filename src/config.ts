@@ -18,6 +18,8 @@ export interface VintedAccount {
   accessToken: string;
   /** Optional `_vinted_fr_session` cookie, some endpoints want it alongside. */
   sessionCookie?: string;
+  /** Optional CSRF token some write endpoints require, from the page meta tag. */
+  csrfToken?: string;
   /** Per-account marketplace domain, falls back to the global default. */
   domain?: string;
   /** Numeric Vinted user id of this account, when known. */
@@ -39,10 +41,22 @@ export interface Config {
   maxRetries: number;
   /** Discount applied when proposing a negotiation price, as a percentage. */
   offerDiscountPct: number;
-  /** Hard ceiling on confirmed likes per account per UTC day. */
+  /** Default ceiling on likes per account per UTC day (0 disables). */
   maxLikesPerDay: number;
-  /** Hard ceiling on confirmed offers per account per UTC day. */
+  /** Default ceiling on offers per account per UTC day (0 disables). */
   maxOffersPerDay: number;
+  /** Default ceiling on automatic actions per account per hour (0 disables). */
+  maxActionsPerHour: number;
+  /** Default activity window for automatic actions, local hours [start, end). */
+  activeHours: { start: number; end: number };
+  /** IANA time zone the activity window is read in. */
+  timeZone: string;
+  /** How long the circuit breaker pauses automation after a refusal. */
+  autopauseHours: number;
+  /** Master switch: the cron sends nothing unless this is true. */
+  autoActionsEnabled: boolean;
+  /** Optional webhook (Discord/Slack-compatible JSON) notified of new finds. */
+  notifyWebhookUrl: string | null;
   /** Items pulled per seller on each monitor pass. */
   monitorPageSize: number;
   /** User-Agent sent to Vinted. Identifies this client honestly. */
@@ -100,6 +114,9 @@ export function parseAccounts(raw: string | null): VintedAccount[] {
     if (typeof rec.sessionCookie === "string" && rec.sessionCookie) {
       account.sessionCookie = rec.sessionCookie;
     }
+    if (typeof rec.csrfToken === "string" && rec.csrfToken) {
+      account.csrfToken = rec.csrfToken;
+    }
     if (typeof rec.domain === "string" && rec.domain) {
       account.domain = rec.domain;
     }
@@ -108,6 +125,18 @@ export function parseAccounts(raw: string | null): VintedAccount[] {
     }
     return account;
   });
+}
+
+/** Parses "8-22" into an hour window. Throws on nonsense. */
+export function parseActiveHours(raw: string): { start: number; end: number } {
+  const match = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*$/.exec(raw);
+  if (!match) throw new Error(`Invalid active hours "${raw}", expected e.g. "8-22".`);
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (start > 24 || end > 24) {
+    throw new Error(`Invalid active hours "${raw}", hours must be 0-24.`);
+  }
+  return { start, end };
 }
 
 let cached: Config | null = null;
@@ -128,8 +157,14 @@ export function getConfig(): Config {
     minRequestIntervalMs: num("VINTED_MIN_REQUEST_INTERVAL_MS", 1200),
     maxRetries: num("VINTED_MAX_RETRIES", 2),
     offerDiscountPct: num("OFFER_DISCOUNT_PCT", 20),
-    maxLikesPerDay: num("MAX_LIKES_PER_DAY", 100),
-    maxOffersPerDay: num("MAX_OFFERS_PER_DAY", 25),
+    maxLikesPerDay: num("MAX_LIKES_PER_DAY", 30),
+    maxOffersPerDay: num("MAX_OFFERS_PER_DAY", 10),
+    maxActionsPerHour: num("MAX_ACTIONS_PER_HOUR", 6),
+    activeHours: parseActiveHours(str("ACTIVE_HOURS") ?? "8-22"),
+    timeZone: str("ACTIVE_TIMEZONE") ?? "Europe/Warsaw",
+    autopauseHours: num("AUTOPAUSE_HOURS", 24),
+    autoActionsEnabled: str("AUTO_ACTIONS_ENABLED") === "true",
+    notifyWebhookUrl: str("NOTIFY_WEBHOOK_URL"),
     monitorPageSize: num("MONITOR_PAGE_SIZE", 20),
     userAgent:
       str("VINTED_USER_AGENT") ??

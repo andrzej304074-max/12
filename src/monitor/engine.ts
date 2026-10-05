@@ -1,8 +1,12 @@
 import { getConfig, type VintedAccount } from "../config.js";
 import { log } from "../log.js";
 import { getStore, keys } from "../store/index.js";
+import { likeItem, sendOffer } from "../vinted/actions.js";
+import { RefusalError } from "../vinted/client.js";
 import { getSellerItems } from "../vinted/search.js";
 import type { NormalisedItem } from "../vinted/types.js";
+import { formatFinds, notify } from "./notify.js";
+import { checkBudget, getLimits, LimitError } from "./safety.js";
 
 /**
  * Watchlist polling.
@@ -11,10 +15,13 @@ import type { NormalisedItem } from "../vinted/types.js";
  * ids already seen, and records anything new as a "find" with a suggested
  * negotiation price.
  *
- * A pass never contacts the seller. Detection and contact are separate on
- * purpose: findings sit in the store until a person reviews them, so an
- * automated poll can never turn into an automated approach to a stranger.
+ * Contacting the seller is opt-in twice over: a watch must have auto_like /
+ * auto_offer set, and AUTO_ACTIONS_ENABLED must be true. Even then, actions
+ * wait in a queue and go out only inside the activity window, under the
+ * hourly and daily limits, and never while the circuit breaker is tripped.
  */
+
+export type AutoKind = "like" | "offer";
 
 export interface Watch {
   sellerId: string;
@@ -22,8 +29,19 @@ export interface Watch {
   sellerLogin: string | null;
   addedAt: string;
   domain: string | null;
-  /** Overrides the global discount for this seller, as a percentage. */
+  /** Overrides the account discount for this seller, as a percentage. */
   discountPct: number | null;
+  /** Like this seller's new items automatically. */
+  autoLike?: boolean;
+  /** Send the discounted offer on this seller's new items automatically. */
+  autoOffer?: boolean;
+}
+
+export interface AutoActionRecord {
+  kind: AutoKind;
+  ok: boolean;
+  at: string;
+  detail: string;
 }
 
 export interface Find {
@@ -39,8 +57,12 @@ export interface Find {
   url: string | null;
   photoUrl: string | null;
   detectedAt: string;
-  /** Set once a person has acted on it, so it stops resurfacing. */
+  /** Set once acted on, so it stops resurfacing. */
   handledAt?: string;
+  /** Automatic actions still waiting for budget or the activity window. */
+  autoPending?: AutoKind[];
+  /** What the automation already did for this find. */
+  autoActions?: AutoActionRecord[];
 }
 
 /** Applies the negotiation discount, rounded to whole currency units. */
@@ -114,6 +136,93 @@ export interface PassResult {
   sellersChecked: number;
   newFinds: Find[];
   errors: { sellerId: string; message: string }[];
+  autoActions: { itemId: string; kind: AutoKind; ok: boolean; detail: string }[];
+  /** Why the automatic queue stopped early, if it did. */
+  autoStoppedBecause: string | null;
+  notified: boolean;
+}
+
+const FIND_TTL = 60 * 60 * 24 * 30;
+
+/**
+ * Works through finds with pending automatic actions, oldest first.
+ * Stops at the first sign the account should slow down: pause, outside the
+ * window, or the hourly limit. A daily cap only skips that kind of action.
+ */
+export async function processAutoQueue(
+  account: VintedAccount,
+  result: PassResult,
+): Promise<void> {
+  if (!getConfig().autoActionsEnabled) return;
+  const store = getStore();
+  const queue = (await listFinds(account.id))
+    .filter((f) => f.autoPending?.length)
+    .sort((a, b) => a.detectedAt.localeCompare(b.detectedAt));
+
+  for (const find of queue) {
+    const pending = [...(find.autoPending ?? [])];
+    const done: AutoActionRecord[] = [...(find.autoActions ?? [])];
+    let stop: string | null = null;
+
+    for (const kind of [...pending]) {
+      const verdict = await checkBudget(account.id, kind, { automatic: true });
+      if (!verdict.ok) {
+        if (verdict.reason === "daily") continue;
+        if (verdict.reason === "disabled") {
+          pending.splice(pending.indexOf(kind), 1);
+          done.push({ kind, ok: false, at: new Date().toISOString(), detail: verdict.message });
+          continue;
+        }
+        stop = verdict.message;
+        break;
+      }
+
+      const record = (ok: boolean, detail: string) => {
+        done.push({ kind, ok, at: new Date().toISOString(), detail });
+        result.autoActions.push({ itemId: find.itemId, kind, ok, detail });
+      };
+
+      try {
+        if (kind === "like") {
+          await likeItem(account, find.itemId, { automatic: true });
+          record(true, "liked");
+        } else {
+          if (find.suggestedOfferPrice === null) {
+            record(false, "no usable asking price, offer skipped");
+          } else {
+            await sendOffer(account, find.itemId, find.suggestedOfferPrice, find.currency, {
+              automatic: true,
+            });
+            record(true, `offered ${find.suggestedOfferPrice}`);
+          }
+        }
+        pending.splice(pending.indexOf(kind), 1);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (err instanceof LimitError) continue;
+        if (err instanceof RefusalError) {
+          // Breaker is tripped; keep the action queued for after the pause.
+          record(false, message);
+          stop = `Vinted refused an action, automation paused: ${message}`;
+          break;
+        }
+        // Unknown outcome on a non-idempotent write: never retry it.
+        record(false, message);
+        pending.splice(pending.indexOf(kind), 1);
+      }
+    }
+
+    const updated: Find = { ...find, autoPending: pending, autoActions: done };
+    if (pending.length === 0 && done.some((d) => d.ok) && !updated.handledAt) {
+      updated.handledAt = new Date().toISOString();
+    }
+    await store.set(keys.find(account.id, find.itemId), updated, FIND_TTL);
+
+    if (stop) {
+      result.autoStoppedBecause = stop;
+      return;
+    }
+  }
 }
 
 /** Runs one monitoring pass for a single account. */
@@ -123,11 +232,15 @@ export async function runPassForAccount(
   const cfg = getConfig();
   const store = getStore();
   const watches = await listWatches(account.id);
+  const limits = await getLimits(account.id);
   const result: PassResult = {
     accountId: account.id,
     sellersChecked: 0,
     newFinds: [],
     errors: [],
+    autoActions: [],
+    autoStoppedBecause: null,
+    notified: false,
   };
 
   for (const watch of watches) {
@@ -144,7 +257,13 @@ export async function runPassForAccount(
       const fresh = items.filter((item) => !seen.has(item.id));
       if (fresh.length === 0) continue;
 
-      const discountPct = watch.discountPct ?? cfg.offerDiscountPct;
+      const discountPct = watch.discountPct ?? limits.discountPct;
+      const autoPending: AutoKind[] = cfg.autoActionsEnabled
+        ? [
+            ...(watch.autoLike ? (["like"] as const) : []),
+            ...(watch.autoOffer ? (["offer"] as const) : []),
+          ]
+        : [];
       for (const item of fresh) {
         const find: Find = {
           itemId: item.id,
@@ -159,9 +278,10 @@ export async function runPassForAccount(
           url: item.url,
           photoUrl: item.photoUrl,
           detectedAt: new Date().toISOString(),
+          ...(autoPending.length ? { autoPending: [...autoPending] } : {}),
         };
         // Finds expire after 30 days so the store does not grow without bound.
-        await store.set(keys.find(account.id, item.id), find, 60 * 60 * 24 * 30);
+        await store.set(keys.find(account.id, item.id), find, FIND_TTL);
         await store.sadd(keys.finds(account.id), item.id);
         result.newFinds.push(find);
       }
@@ -175,6 +295,11 @@ export async function runPassForAccount(
       log.warn("watch pass failed", { sellerId: watch.sellerId, message });
     }
   }
+
+  if (result.newFinds.length) {
+    result.notified = await notify(formatFinds(account.id, result.newFinds));
+  }
+  await processAutoQueue(account, result);
   return result;
 }
 
@@ -187,6 +312,10 @@ export async function runPass(): Promise<PassResult[]> {
   }
   await getStore().set(keys.lastRun(), new Date().toISOString());
   return results;
+}
+
+export async function getFind(accountId: string, itemId: string): Promise<Find | null> {
+  return getStore().get<Find>(keys.find(accountId, itemId));
 }
 
 /** Returns recorded finds, newest first. */

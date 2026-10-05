@@ -1,4 +1,5 @@
 import { log } from "../log.js";
+import { LimitError } from "../monitor/safety.js";
 import { AccountError } from "../vinted/accounts.js";
 import { VintedError } from "../vinted/client.js";
 import {
@@ -28,9 +29,12 @@ What it does: finds comparable listings, estimates a defensible price, resolves
 categories and brands, drafts and validates listings, and watches chosen sellers
 for newly posted items - reporting each with a suggested negotiation price.
 
-What it does not do: it never publishes, deletes, likes, messages or makes an
-offer. Every tool here is research; acting on a finding happens in Vinted, by
-you. Treat suggested offer prices as arithmetic, not as a sent offer.`;
+Actions that change something on Vinted (like_item, make_offer, process_find,
+send_message, publish_listing, delete_listing) never send without
+confirm: true. Called without it they return a preview - show it to the user
+and only confirm once they have agreed. Automatic likes/offers on watched
+sellers are opt-in per seller, off unless AUTO_ACTIONS_ENABLED is set, and
+bounded by the limits shown in get_automation_status.`;
 
 /**
  * Turns an exception into a tool result. Argument, account and upstream errors
@@ -41,6 +45,7 @@ function toToolError(name: string, err: unknown): ToolResult {
   if (
     err instanceof ArgumentError ||
     err instanceof AccountError ||
+    err instanceof LimitError ||
     err instanceof VintedError
   ) {
     return { content: [{ type: "text", text: err.message }], isError: true };

@@ -12,6 +12,9 @@ import { endpoints } from "./endpoints.js";
  * Spacing requests out is here to avoid hammering someone else's service, not
  * to disguise the client. Nothing in this file randomises timing, rotates
  * fingerprints or otherwise tries to defeat bot detection.
+ *
+ * Writes (`send`) are never retried: liking or offering is not idempotent, and
+ * a retry after a timeout could send the same offer twice.
  */
 
 export class VintedError extends Error {
@@ -22,6 +25,22 @@ export class VintedError extends Error {
   ) {
     super(message);
     this.name = "VintedError";
+  }
+}
+
+/**
+ * Vinted pushed back on a write: auth refused, rate limited, or a challenge
+ * page instead of JSON. The circuit breaker pauses automation on this.
+ */
+export class RefusalError extends VintedError {
+  constructor(
+    message: string,
+    status: number | null,
+    path: string,
+    readonly retryAfterSeconds: number | null = null,
+  ) {
+    super(message, status, path);
+    this.name = "RefusalError";
   }
 }
 
@@ -164,6 +183,88 @@ export class VintedClient {
     }
     throw lastError ?? new VintedError("request failed", null, path);
   }
+
+  /** Performs one write as an account. Never retried. */
+  async send<T>(
+    method: "POST" | "PUT" | "DELETE",
+    path: string,
+    opts: SendOptions,
+  ): Promise<T> {
+    const { account } = opts;
+    const domain = opts.domain ?? account.domain ?? this.cfg.defaultDomain;
+    const url = new URL(`https://${domain}${path}`);
+    for (const [key, value] of Object.entries(opts.query ?? {})) {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    }
+    await this.pace();
+    const headers: Record<string, string> = {
+      "user-agent": this.cfg.userAgent,
+      accept: "application/json",
+      "accept-language": "pl-PL,pl;q=0.9,en;q=0.8",
+      cookie: this.cookieHeader(account),
+    };
+    if (opts.body !== undefined) headers["content-type"] = "application/json";
+    if (account.csrfToken) headers["x-csrf-token"] = account.csrfToken;
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+      });
+    } catch (err) {
+      throw new VintedError(
+        `network error, the action may or may not have gone through - check in Vinted before repeating: ${(err as Error).message}`,
+        null,
+        path,
+      );
+    }
+
+    if (res.status === 429) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      throw new RefusalError(
+        "Vinted is rate limiting this account (429).",
+        429,
+        path,
+        Number.isFinite(retryAfter) ? retryAfter : null,
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new RefusalError(
+        `Vinted refused the action for account "${account.id}" (${res.status}). The token may have expired, or the action needs a CSRF token or a captcha.`,
+        res.status,
+        path,
+      );
+    }
+    const contentType = res.headers.get("content-type") ?? "";
+    if (res.ok && !contentType.includes("json") && res.status !== 204) {
+      throw new RefusalError(
+        "Vinted answered with a page instead of JSON - most likely a challenge or captcha.",
+        res.status,
+        path,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new VintedError(
+        `action failed with ${res.status}: ${body.slice(0, 300)}`,
+        res.status,
+        path,
+      );
+    }
+    if (res.status === 204) return {} as T;
+    return (await res.json().catch(() => ({}))) as T;
+  }
+}
+
+export interface SendOptions {
+  account: VintedAccount;
+  body?: unknown;
+  query?: RequestOptions["query"];
+  domain?: string;
 }
 
 function backoffMs(attempt: number): number {

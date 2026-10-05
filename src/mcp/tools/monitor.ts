@@ -20,10 +20,9 @@ import { optBoolean, optNumber, optString, requireString, type Tool } from "./ty
 /**
  * Seller monitoring.
  *
- * The split here is deliberate: these tools watch sellers and surface what is
- * new, including the price a negotiation would open at. They do not contact
- * anybody. Turning a find into a like or an offer is a person's call, made in
- * Vinted - see docs/ACTIONS.md for why that boundary sits where it does.
+ * These tools watch sellers and surface what is new, including the price a
+ * negotiation would open at. Acting on a find lives in ./actions.ts; automatic
+ * actions are opt-in per watch (auto_like / auto_offer) - see docs/ACTIONS.md.
  */
 
 const accountProp = {
@@ -51,6 +50,16 @@ const watchSeller: Tool = {
           "Negotiation discount for this seller, as a percentage off the asking price. Defaults to OFFER_DISCOUNT_PCT (20).",
       },
       domain: { type: "string", description: "Marketplace host for this seller." },
+      auto_like: {
+        type: "boolean",
+        description:
+          "Like this seller's new items automatically. Takes effect only when AUTO_ACTIONS_ENABLED=true; subject to limits and the activity window.",
+      },
+      auto_offer: {
+        type: "boolean",
+        description:
+          "Send the discounted offer on this seller's new items automatically. Takes effect only when AUTO_ACTIONS_ENABLED=true; subject to limits and the activity window.",
+      },
     },
     required: ["seller_id"],
     additionalProperties: false,
@@ -74,14 +83,22 @@ const watchSeller: Tool = {
       addedAt: new Date().toISOString(),
       domain,
       discountPct: optNumber(args, "discount_pct") ?? null,
+      autoLike: optBoolean(args, "auto_like") ?? false,
+      autoOffer: optBoolean(args, "auto_offer") ?? false,
     };
     await addWatch(account.id, watch);
 
+    const wantsAuto = watch.autoLike || watch.autoOffer;
     return jsonResult({
       watching: watch,
       account: account.id,
       seededItems: seeded,
       durableStorage: store.durable,
+      automation: wantsAuto
+        ? getConfig().autoActionsEnabled
+          ? "Automatic actions are on for this seller, within the account's limits and activity window."
+          : "Automatic actions are requested but AUTO_ACTIONS_ENABLED is not true, so nothing will be sent automatically yet."
+        : "Detection only.",
       note: store.durable
         ? "Watch saved. New listings will be picked up on the next monitor pass."
         : "Warning: no Upstash credentials are configured, so this watch lives in memory only and will not survive the next invocation. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
@@ -160,7 +177,7 @@ const listNewFinds: Tool = {
       account: account.id,
       count: finds.length,
       finds,
-      note: "Suggested offer prices are calculations only. This server does not like items or send offers; open the listing URL to act.",
+      note: "Act on a find with like_item, make_offer or process_find (each needs confirm: true), or by hand via its URL.",
     });
   },
 };

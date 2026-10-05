@@ -1,3 +1,4 @@
+import { actionTools } from "./actions.js";
 import { listingTools } from "./listing.js";
 import { monitorTools } from "./monitor.js";
 import { opsTools } from "./ops.js";
@@ -8,6 +9,7 @@ export const allTools: Tool[] = [
   ...researchTools,
   ...listingTools,
   ...monitorTools,
+  ...actionTools,
   ...opsTools,
 ];
 

@@ -16,13 +16,13 @@ describe("initialize", () => {
     expect(res.result.serverInfo).toEqual(SERVER_INFO);
   });
 
-  it("states in its instructions that it does not act on the marketplace", async () => {
+  it("tells the client that actions need confirm: true", async () => {
     const res = (await handleRequest({
       jsonrpc: "2.0",
       id: 1,
       method: "initialize",
     })) as { result: { instructions: string } };
-    expect(res.result.instructions).toMatch(/never publishes/i);
+    expect(res.result.instructions).toMatch(/never send without\s+confirm: true/i);
   });
 });
 
